@@ -124,6 +124,8 @@ func main() {
 	ttl := config.TTL // Time to live for cache entries
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received request: %s %s", r.Method, r.URL.Path)
+
 		if r.Method == "GET" {
 			cacheKey := r.URL.String()
 			if cachedItem, found := cache.Get(cacheKey); found {
