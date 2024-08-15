@@ -51,13 +51,11 @@ func TestLoadConfig(t *testing.T) {
 	// Save current env vars
 	oldOriginURL := os.Getenv("ORIGIN_URL")
 	oldTTLMinutes := os.Getenv("TTL_MINUTES")
-	oldCacheSize := os.Getenv("CACHE_SIZE")
 	oldPort := os.Getenv("PORT")
 
 	// Set test env vars
 	os.Setenv("ORIGIN_URL", "https://example.com")
 	os.Setenv("TTL_MINUTES", "10")
-	os.Setenv("CACHE_SIZE", "200")
 	os.Setenv("PORT", "9090")
 
 	config := loadConfig()
@@ -68,9 +66,6 @@ func TestLoadConfig(t *testing.T) {
 	if config.TTL != 10*time.Minute {
 		t.Errorf("Expected TTL to be 10 minutes, got %v", config.TTL)
 	}
-	if config.CacheSize != 200 {
-		t.Errorf("Expected CacheSize to be 200, got %d", config.CacheSize)
-	}
 	if config.Port != "9090" {
 		t.Errorf("Expected Port to be 9090, got %s", config.Port)
 	}
@@ -78,6 +73,5 @@ func TestLoadConfig(t *testing.T) {
 	// Restore original env vars
 	os.Setenv("ORIGIN_URL", oldOriginURL)
 	os.Setenv("TTL_MINUTES", oldTTLMinutes)
-	os.Setenv("CACHE_SIZE", oldCacheSize)
 	os.Setenv("PORT", oldPort)
 }
