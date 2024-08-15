@@ -48,3 +48,6 @@ This uses [version 8](https://github.com/redis/go-redis) of `go-redis` so if you
 
 I like Varnish but the configuration for it is a nightmare, and much of the documentation is decades old. Gleam intends to take on much of the critical functionality with a much easier configuration experience. 
 
+## Disclaimer
+
+Gleam is intended for an origin server that presents static contents, or static contents determined by the URL accessed. It is not recommend to use Gleam to cache the contents of, say, a logged-in dashboard where the data is dynamic or determined by sessions.  
