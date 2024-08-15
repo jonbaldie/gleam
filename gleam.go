@@ -142,7 +142,6 @@ func (w *CacheResponseWriter) Header() http.Header {
 type Config struct {
 	OriginURL string
 	TTL       time.Duration
-	CacheSize int
 	Port      string
 	RedisURL  string
 	CacheType string
@@ -155,11 +154,6 @@ func loadConfig() *Config {
 		log.Fatalf("Error parsing TTL_MINUTES: %v", err)
 	}
 
-	cacheSize, err := strconv.Atoi(getenv("CACHE_SIZE", "100"))
-	if err != nil {
-		log.Fatalf("Error parsing CACHE_SIZE: %v", err)
-	}
-
 	redisUrl := getenv("REDIS_URL", "redis://localhost:6379/0")
 	cacheType := getenv("CACHE_TYPE", "memory")
 	if cacheType != "redis" && cacheType != "memory" {
@@ -169,7 +163,6 @@ func loadConfig() *Config {
 	return &Config{
 		OriginURL: getenv("ORIGIN_URL", "https://httpbin.org"),
 		TTL:       time.Duration(ttlMinutes) * time.Minute,
-		CacheSize: cacheSize,
 		Port:      getenv("PORT", "8080"),
 		RedisURL:  redisUrl,
 		CacheType: cacheType,
@@ -187,7 +180,7 @@ func getenv(key, fallback string) string {
 func main() {
 	config := loadConfig()
 
-	log.Printf("Gleam started with Origin: %s, TTL: %v, Cache Size: %d, Port: %s", config.OriginURL, config.TTL, config.CacheSize, config.Port)
+	log.Printf("Gleam started with Origin: %s, TTL: %v, Port: %s", config.OriginURL, config.TTL, config.Port)
 
 	var cache Cache
 
