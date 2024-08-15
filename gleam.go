@@ -95,7 +95,6 @@ func (r *RedisCache) Set(key string, content []byte, header http.Header, ttl tim
 		content: content,
 		header:  header,
 	}
-	//itemBytes, _ := json.Marshal(cacheItem)
 	itemBytes, _ := encodeCacheItem(cacheItem)
 	r.client.Set(ctx, key, itemBytes, ttl).Err()
 }
@@ -110,7 +109,6 @@ func (r *RedisCache) Get(key string) (*CacheItem, bool) {
 
 	// Deserialize CacheItem
 	var cacheItem *CacheItem
-	//err = json.Unmarshal([]byte(result), &cacheItem)
 	cacheItem, err = decodeCacheItem([]byte(result))
 	if err != nil {
 		return nil, false
