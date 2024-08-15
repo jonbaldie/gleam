@@ -15,7 +15,6 @@ Set the following environment variables to configure Gleam:
 
 - `ORIGIN_URL`: Backend server URL (default: https://httpbin.org)
 - `TTL_MINUTES`: Cache entry time-to-live in minutes (default: 5)
-- `CACHE_SIZE`: Maximum number of cache entries (default: 100)
 - `PORT`: Port to run Gleam on (default: 8080)
 
 ## Usage
