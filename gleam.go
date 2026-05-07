@@ -21,7 +21,7 @@ import (
 var ctx = context.Background()
 
 type Cache interface {
-	Set(key string, content []byte, header http.Header, ttl time.Duration)
+	Set(key string, content []byte, header http.Header, status int, ttl time.Duration)
 	Get(key string) (*CacheItem, bool)
 }
 
@@ -35,17 +35,19 @@ type SimpleCache struct {
 type CacheItem struct {
 	content    []byte
 	header     http.Header
+	status     int
 	expiration time.Time
 }
 
 // Set stores data in the cache
-func (c *SimpleCache) Set(key string, content []byte, header http.Header, ttl time.Duration) {
+func (c *SimpleCache) Set(key string, content []byte, header http.Header, status int, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.store[key] = &CacheItem{
 		content:    content,
 		header:     header,
+		status:     status,
 		expiration: time.Now().Add(ttl),
 	}
 }
@@ -90,11 +92,12 @@ func NewRedisCache(redisURL string) *RedisCache {
 }
 
 // Set stores data in Redis
-func (r *RedisCache) Set(key string, content []byte, header http.Header, ttl time.Duration) {
+func (r *RedisCache) Set(key string, content []byte, header http.Header, status int, ttl time.Duration) {
 	// Serialize CacheItem
 	cacheItem := CacheItem{
 		content: content,
 		header:  header,
+		status:  status,
 	}
 	itemBytes, _ := encodeCacheItem(cacheItem)
 	r.client.Set(ctx, key, itemBytes, ttl).Err()
@@ -227,14 +230,17 @@ func main() {
 						w.Header().Add(key, value)
 					}
 				}
+				w.WriteHeader(cachedItem.status)
 				w.Write(cachedItem.content)
 				return
 			}
 
-			crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer)}
+			crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
 			proxy.ServeHTTP(crw, r)
 
-			cache.Set(cacheKey, crw.buf.Bytes(), crw.Header(), ttl)
+			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
+				cache.Set(cacheKey, crw.buf.Bytes(), crw.Header(), crw.status, ttl)
+			}
 		} else {
 			proxy.ServeHTTP(w, r)
 		}
@@ -253,6 +259,11 @@ func encodeCacheItem(item CacheItem) ([]byte, error) {
 		return nil, err
 	}
 	if _, err := buf.Write(item.content); err != nil {
+		return nil, err
+	}
+
+	status := uint32(item.status)
+	if err := binary.Write(&buf, binary.LittleEndian, status); err != nil {
 		return nil, err
 	}
 
@@ -325,6 +336,12 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 	if _, err := buf.Read(item.content); err != nil {
 		return nil, err
 	}
+
+	var status uint32
+	if err := binary.Read(buf, binary.LittleEndian, &status); err != nil {
+		return nil, err
+	}
+	item.status = int(status)
 
 	// Read the headers
 	var headerLen uint32

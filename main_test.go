@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -14,7 +17,7 @@ func TestSimpleCache(t *testing.T) {
 	cache := NewSimpleCache()
 
 	// Test Set and Get
-	cache.Set("key1", []byte("value1"), http.Header{}, 1*time.Minute)
+	cache.Set("key1", []byte("value1"), http.Header{}, http.StatusOK, 1*time.Minute)
 	item, found := cache.Get("key1")
 	if !found {
 		t.Error("Expected to find key1 in cache")
@@ -24,7 +27,7 @@ func TestSimpleCache(t *testing.T) {
 	}
 
 	// Test expiration
-	cache.Set("key2", []byte("value2"), http.Header{}, 1*time.Nanosecond)
+	cache.Set("key2", []byte("value2"), http.Header{}, http.StatusOK, 1*time.Nanosecond)
 	time.Sleep(1 * time.Millisecond)
 	_, found = cache.Get("key2")
 	if found {
@@ -127,4 +130,120 @@ func TestParseOriginURLRejectsMissingScheme(t *testing.T) {
 	if !strings.Contains(err.Error(), "must include http or https scheme") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("created"))
+	}))
+	defer origin.Close()
+
+	cache := NewSimpleCache()
+	handler := newCachingProxyHandler(t, origin.URL, cache, time.Minute)
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first response status %d, got %d", http.StatusCreated, first.Code)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected cached response status %d, got %d", http.StatusCreated, second.Code)
+	}
+	if body := second.Body.String(); body != "created" {
+		t.Fatalf("expected cached body %q, got %q", "created", body)
+	}
+	if got := originCalls.Load(); got != 1 {
+		t.Fatalf("expected one origin call after cache hit, got %d", got)
+	}
+	if item, found := cache.Get("/resource"); !found {
+		t.Fatal("expected successful response to be cached")
+	} else if item.status != http.StatusCreated {
+		t.Fatalf("expected cached item status %d, got %d", http.StatusCreated, item.status)
+	}
+}
+
+func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := originCalls.Add(1)
+		if call == 1 {
+			http.Error(w, "temporary failure", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("recovered"))
+	}))
+	defer origin.Close()
+
+	cache := NewSimpleCache()
+	handler := newCachingProxyHandler(t, origin.URL, cache, time.Minute)
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/flaky", nil))
+	if first.Code != http.StatusBadGateway {
+		t.Fatalf("expected first response status %d, got %d", http.StatusBadGateway, first.Code)
+	}
+	if _, found := cache.Get("/flaky"); found {
+		t.Fatal("expected transient failure response to not be cached")
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/flaky", nil))
+	if second.Code != http.StatusOK {
+		t.Fatalf("expected recovery response status %d, got %d", http.StatusOK, second.Code)
+	}
+	if body := second.Body.String(); body != "recovered" {
+		t.Fatalf("expected recovery body %q, got %q", "recovered", body)
+	}
+	if got := originCalls.Load(); got != 2 {
+		t.Fatalf("expected second request to reach origin after failure, got %d calls", got)
+	}
+	if item, found := cache.Get("/flaky"); !found {
+		t.Fatal("expected recovered response to be cached")
+	} else if item.status != http.StatusOK {
+		t.Fatalf("expected cached recovery status %d, got %d", http.StatusOK, item.status)
+	}
+}
+
+func newCachingProxyHandler(t *testing.T, originURL string, cache Cache, ttl time.Duration) http.Handler {
+	t.Helper()
+
+	origin, err := url.Parse(originURL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(origin)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			cacheKey := r.URL.String()
+			if cachedItem, found := cache.Get(cacheKey); found {
+				for key, values := range cachedItem.header {
+					for _, value := range values {
+						w.Header().Add(key, value)
+					}
+				}
+				w.WriteHeader(cachedItem.status)
+				w.Write(cachedItem.content)
+				return
+			}
+
+			crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
+			proxy.ServeHTTP(crw, r)
+			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
+				cache.Set(cacheKey, crw.buf.Bytes(), crw.Header(), crw.status, ttl)
+			}
+			return
+		}
+
+		proxy.ServeHTTP(w, r)
+	})
 }
