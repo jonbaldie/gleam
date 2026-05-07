@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/go-redis/redis/v8"
 	"log"
 	"net/http"
@@ -141,6 +142,7 @@ func (w *CacheResponseWriter) Header() http.Header {
 // Config holds all configurable options
 type Config struct {
 	OriginURL string
+	Origin    *url.URL
 	TTL       time.Duration
 	Port      string
 	RedisURL  string
@@ -160,13 +162,34 @@ func loadConfig() *Config {
 		log.Fatalf("Invalid CACHE_TYPE, must be 'memory' (default) or 'redis'")
 	}
 
+	originURL := getenv("ORIGIN_URL", "https://httpbin.org")
+	origin, err := parseOriginURL(originURL)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+
 	return &Config{
-		OriginURL: getenv("ORIGIN_URL", "https://httpbin.org"),
+		OriginURL: originURL,
+		Origin:    origin,
 		TTL:       time.Duration(ttlMinutes) * time.Minute,
 		Port:      getenv("PORT", "8080"),
 		RedisURL:  redisUrl,
 		CacheType: cacheType,
 	}
+}
+
+func parseOriginURL(raw string) (*url.URL, error) {
+	origin, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ORIGIN_URL %q: %w", raw, err)
+	}
+	if origin.Scheme != "http" && origin.Scheme != "https" {
+		return nil, fmt.Errorf("invalid ORIGIN_URL %q: must include http or https scheme", raw)
+	}
+	if origin.Host == "" {
+		return nil, fmt.Errorf("invalid ORIGIN_URL %q: host is required", raw)
+	}
+	return origin, nil
 }
 
 func getenv(key, fallback string) string {
@@ -190,8 +213,7 @@ func main() {
 		cache = NewSimpleCache()
 	}
 
-	origin, _ := url.Parse(config.OriginURL) // URL of the backend server
-	proxy := httputil.NewSingleHostReverseProxy(origin)
+	proxy := httputil.NewSingleHostReverseProxy(config.Origin)
 	ttl := config.TTL // Time to live for cache entries
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
