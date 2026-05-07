@@ -37,7 +37,9 @@ func TestCacheResponseWriter(t *testing.T) {
 	crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer)}
 
 	crw.WriteHeader(http.StatusOK)
-	crw.Write([]byte("Hello, World!"))
+	if _, err := crw.Write([]byte("Hello, World!")); err != nil {
+		t.Fatalf("expected write to succeed: %v", err)
+	}
 
 	if crw.status != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, crw.status)

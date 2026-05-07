@@ -27,6 +27,28 @@ Set the following environment variables to configure Gleam:
 
 Gleam will cache GET requests and serve cached responses when available, improving response times and reducing load on your origin server.
 
+## Linting
+
+The repository lint gate is:
+
+```bash
+./bin/golangci-lint run --build-tags=gms_pure_go ./...
+```
+
+Verified install/runtime path in a fresh environment:
+
+```bash
+./scripts/install-golangci-lint.sh
+GOTOOLCHAIN=go1.24.10 ./bin/golangci-lint run --build-tags=gms_pure_go ./...
+```
+
+Notes:
+
+- `./scripts/install-golangci-lint.sh` downloads the pinned `v1.64.8` release tarball directly from the golangci-lint releases page instead of piping a mutable installer script from `HEAD`.
+- `go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8` is not reproducible here because it resolves `github.com/tdakkota/asciicheck`, whose repository is gone.
+- Running the installed binary against a host-selected Go 1.26 toolchain fails before repository analysis because released golangci-lint binaries are still built with Go 1.24.x and cannot typecheck Go 1.26 stdlib files.
+- `GOTOOLCHAIN=go1.24.10` avoids that runtime mismatch and lets the lint gate complete successfully in this repository.
+
 ## Docker
 
 There is a Docker image maintained as `jonbaldie/gleam`. 

@@ -133,8 +133,14 @@ func (r *RedisCache) Set(key string, content []byte, header http.Header, status 
 		header:  header,
 		status:  status,
 	}
-	itemBytes, _ := encodeCacheItem(cacheItem)
-	r.client.Set(ctx, key, itemBytes, ttl).Err()
+	itemBytes, err := encodeCacheItem(cacheItem)
+	if err != nil {
+		log.Printf("failed to encode cache item for key %q: %v", key, err)
+		return
+	}
+	if err := r.client.Set(ctx, key, itemBytes, ttl).Err(); err != nil {
+		log.Printf("failed to write cache item for key %q: %v", key, err)
+	}
 }
 
 // Get retrieves data from Redis
@@ -158,7 +164,6 @@ func (r *RedisCache) Get(key string) (*CacheItem, bool) {
 type CacheResponseWriter struct {
 	http.ResponseWriter
 	buf    *bytes.Buffer
-	header http.Header
 	status int
 }
 
