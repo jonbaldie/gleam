@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"github.com/go-redis/redis/v8"
 	"log"
@@ -10,15 +11,48 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 )
 
 var ctx = context.Background()
+
+func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) http.Handler {
+	proxy := httputil.NewSingleHostReverseProxy(origin)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			cacheKey := cacheKeyForRequest(r)
+			if cachedItem, found := cache.Get(cacheKey); found {
+				for key, values := range cachedItem.header {
+					for _, value := range values {
+						w.Header().Add(key, value)
+					}
+				}
+				w.WriteHeader(cachedItem.status)
+				_, _ = w.Write(cachedItem.content)
+				return
+			}
+
+			crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
+			proxy.ServeHTTP(crw, r)
+
+			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
+				cache.Set(cacheKey, crw.buf.Bytes(), crw.Header(), crw.status, ttl)
+			}
+			return
+		}
+
+		proxy.ServeHTTP(w, r)
+	})
+}
 
 type Cache interface {
 	Set(key string, content []byte, header http.Header, status int, ttl time.Duration)
@@ -154,21 +188,32 @@ type Config struct {
 
 // loadConfig loads configuration from environment variables
 func loadConfig() *Config {
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	return config
+}
+
+func loadConfigFromEnv() (*Config, error) {
 	ttlMinutes, err := strconv.Atoi(getenv("TTL_MINUTES", "5"))
 	if err != nil {
-		log.Fatalf("Error parsing TTL_MINUTES: %v", err)
+		return nil, fmt.Errorf("error parsing TTL_MINUTES: %w", err)
+	}
+	if ttlMinutes <= 0 {
+		return nil, fmt.Errorf("invalid TTL_MINUTES %d: must be greater than 0", ttlMinutes)
 	}
 
 	redisUrl := getenv("REDIS_URL", "redis://localhost:6379/0")
 	cacheType := getenv("CACHE_TYPE", "memory")
 	if cacheType != "redis" && cacheType != "memory" {
-		log.Fatalf("Invalid CACHE_TYPE, must be 'memory' (default) or 'redis'")
+		return nil, fmt.Errorf("invalid CACHE_TYPE, must be 'memory' (default) or 'redis'")
 	}
 
 	originURL := getenv("ORIGIN_URL", "https://httpbin.org")
 	origin, err := parseOriginURL(originURL)
 	if err != nil {
-		log.Fatalf("%v", err)
+		return nil, err
 	}
 
 	return &Config{
@@ -178,7 +223,7 @@ func loadConfig() *Config {
 		Port:      getenv("PORT", "8080"),
 		RedisURL:  redisUrl,
 		CacheType: cacheType,
-	}
+	}, nil
 }
 
 func parseOriginURL(raw string) (*url.URL, error) {
@@ -203,6 +248,34 @@ func getenv(key, fallback string) string {
 	return value
 }
 
+// Include request headers in the cache key so one caller's GET response is not
+// served to another caller with different request metadata.
+func cacheKeyForRequest(r *http.Request) string {
+	base := r.URL.String()
+	if len(r.Header) == 0 {
+		return base
+	}
+
+	headerNames := make([]string, 0, len(r.Header))
+	for name := range r.Header {
+		headerNames = append(headerNames, name)
+	}
+	sort.Strings(headerNames)
+
+	var signature strings.Builder
+	for _, name := range headerNames {
+		values := append([]string(nil), r.Header.Values(name)...)
+		sort.Strings(values)
+		signature.WriteString(name)
+		signature.WriteByte(':')
+		signature.WriteString(strings.Join(values, ","))
+		signature.WriteByte('\n')
+	}
+
+	sum := sha256.Sum256([]byte(signature.String()))
+	return base + "#h=" + hex.EncodeToString(sum[:])
+}
+
 func main() {
 	config := loadConfig()
 
@@ -215,35 +288,11 @@ func main() {
 	} else {
 		cache = NewSimpleCache()
 	}
-
-	proxy := httputil.NewSingleHostReverseProxy(config.Origin)
-	ttl := config.TTL // Time to live for cache entries
+	handler := newCachingProxyHandler(config.Origin, cache, config.TTL)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s", r.Method, r.URL.Path)
-
-		if r.Method == "GET" {
-			cacheKey := r.URL.String()
-			if cachedItem, found := cache.Get(cacheKey); found {
-				for key, values := range cachedItem.header {
-					for _, value := range values {
-						w.Header().Add(key, value)
-					}
-				}
-				w.WriteHeader(cachedItem.status)
-				w.Write(cachedItem.content)
-				return
-			}
-
-			crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
-			proxy.ServeHTTP(crw, r)
-
-			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
-				cache.Set(cacheKey, crw.buf.Bytes(), crw.Header(), crw.status, ttl)
-			}
-		} else {
-			proxy.ServeHTTP(w, r)
-		}
+		handler.ServeHTTP(w, r)
 	})
 
 	log.Fatal(http.ListenAndServe(":"+config.Port, nil))

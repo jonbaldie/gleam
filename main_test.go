@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
-	"net/url"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -51,18 +48,15 @@ func TestCacheResponseWriter(t *testing.T) {
 	}
 }
 
-func TestLoadConfig(t *testing.T) {
-	// Save current env vars
-	oldOriginURL := os.Getenv("ORIGIN_URL")
-	oldTTLMinutes := os.Getenv("TTL_MINUTES")
-	oldPort := os.Getenv("PORT")
+func TestLoadConfigFromEnvAcceptsPositiveTTLMinutes(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("TTL_MINUTES", "10")
+	t.Setenv("PORT", "9090")
 
-	// Set test env vars
-	os.Setenv("ORIGIN_URL", "https://example.com")
-	os.Setenv("TTL_MINUTES", "10")
-	os.Setenv("PORT", "9090")
-
-	config := loadConfig()
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected positive TTL_MINUTES to load, got error: %v", err)
+	}
 
 	if config.OriginURL != "https://example.com" {
 		t.Errorf("Expected OriginURL to be https://example.com, got %s", config.OriginURL)
@@ -73,11 +67,32 @@ func TestLoadConfig(t *testing.T) {
 	if config.Port != "9090" {
 		t.Errorf("Expected Port to be 9090, got %s", config.Port)
 	}
+}
 
-	// Restore original env vars
-	os.Setenv("ORIGIN_URL", oldOriginURL)
-	os.Setenv("TTL_MINUTES", oldTTLMinutes)
-	os.Setenv("PORT", oldPort)
+func TestLoadConfigFromEnvRejectsZeroTTLMinutes(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("TTL_MINUTES", "0")
+
+	_, err := loadConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected zero TTL_MINUTES to fail")
+	}
+	if !strings.Contains(err.Error(), "must be greater than 0") {
+		t.Fatalf("expected clear TTL validation error, got %v", err)
+	}
+}
+
+func TestLoadConfigFromEnvRejectsNegativeTTLMinutes(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("TTL_MINUTES", "-5")
+
+	_, err := loadConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected negative TTL_MINUTES to fail")
+	}
+	if !strings.Contains(err.Error(), "must be greater than 0") {
+		t.Fatalf("expected clear TTL validation error, got %v", err)
+	}
 }
 
 func TestParseOriginURL(t *testing.T) {
@@ -148,7 +163,7 @@ func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
 	defer origin.Close()
 
 	cache := NewSimpleCache()
-	handler := newCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
 
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -189,7 +204,7 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	defer origin.Close()
 
 	cache := NewSimpleCache()
-	handler := newCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
 
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/flaky", nil))
@@ -218,37 +233,76 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	}
 }
 
-func newCachingProxyHandler(t *testing.T, originURL string, cache Cache, ttl time.Duration) http.Handler {
+func TestProxySeparatesCachedGetsByAuthorizationHeader(t *testing.T) {
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
+	}))
+	defer origin.Close()
+
+	cache := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+
+	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	firstRequest.Header.Set("Authorization", "Bearer alpha")
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, firstRequest)
+	if body := first.Body.String(); body != "Bearer alpha" {
+		t.Fatalf("expected first body %q, got %q", "Bearer alpha", body)
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	secondRequest.Header.Set("Authorization", "Bearer beta")
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, secondRequest)
+	if body := second.Body.String(); body != "Bearer beta" {
+		t.Fatalf("expected second body %q, got %q", "Bearer beta", body)
+	}
+
+	if got := originCalls.Load(); got != 2 {
+		t.Fatalf("expected distinct authorization headers to bypass shared cache, got %d origin calls", got)
+	}
+}
+
+func TestProxyCachesEquivalentGetsWithSameAuthorizationHeader(t *testing.T) {
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
+	}))
+	defer origin.Close()
+
+	cache := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+
+	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	firstRequest.Header.Set("Authorization", "Bearer alpha")
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, firstRequest)
+
+	secondRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	secondRequest.Header.Set("Authorization", "Bearer alpha")
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, secondRequest)
+
+	if first.Body.String() != second.Body.String() {
+		t.Fatalf("expected equivalent requests to share cached body, got %q and %q", first.Body.String(), second.Body.String())
+	}
+	if got := originCalls.Load(); got != 1 {
+		t.Fatalf("expected cache hit for identical authorization header, got %d origin calls", got)
+	}
+}
+
+func mustCachingProxyHandler(t *testing.T, originURL string, cache Cache, ttl time.Duration) http.Handler {
 	t.Helper()
 
-	origin, err := url.Parse(originURL)
+	origin, err := parseOriginURL(originURL)
 	if err != nil {
 		t.Fatalf("parse origin URL: %v", err)
 	}
-	proxy := httputil.NewSingleHostReverseProxy(origin)
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			cacheKey := r.URL.String()
-			if cachedItem, found := cache.Get(cacheKey); found {
-				for key, values := range cachedItem.header {
-					for _, value := range values {
-						w.Header().Add(key, value)
-					}
-				}
-				w.WriteHeader(cachedItem.status)
-				w.Write(cachedItem.content)
-				return
-			}
-
-			crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
-			proxy.ServeHTTP(crw, r)
-			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
-				cache.Set(cacheKey, crw.buf.Bytes(), crw.Header(), crw.status, ttl)
-			}
-			return
-		}
-
-		proxy.ServeHTTP(w, r)
-	})
+	return newCachingProxyHandler(origin, cache, ttl)
 }
