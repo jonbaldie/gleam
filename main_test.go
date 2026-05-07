@@ -97,6 +97,11 @@ func TestParseOriginURL(t *testing.T) {
 			input:   "https://example.com/\tbad",
 			wantErr: "invalid ORIGIN_URL",
 		},
+		{
+			name:    "malformed but parseable origin missing host",
+			input:   ":bad",
+			wantErr: "invalid ORIGIN_URL",
+		},
 	}
 
 	for _, tt := range tests {
