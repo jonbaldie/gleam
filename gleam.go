@@ -371,8 +371,22 @@ func encodeCacheItem(item CacheItem) ([]byte, error) {
 	return []byte(encoded), nil
 }
 
+// readSized reads a uint32 length prefix then exactly that many bytes from r.
+// It collapses the repeated binary.Read/buf.Read pairs in decodeCacheItem,
+// keeping cyclomatic complexity under the gocyclo threshold of 15.
+func readSized(r *bytes.Reader) ([]byte, error) {
+	var n uint32
+	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
+		return nil, err
+	}
+	b := make([]byte, n)
+	if _, err := r.Read(b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 func decodeCacheItem(data []byte) (*CacheItem, error) {
-	// Decode the base64 input
 	decoded, err := base64.StdEncoding.DecodeString(string(data))
 	if err != nil {
 		return nil, err
@@ -381,13 +395,7 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 	buf := bytes.NewReader(decoded)
 	item := &CacheItem{}
 
-	// Read content length and content
-	var contentLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &contentLen); err != nil {
-		return nil, err
-	}
-	item.content = make([]byte, contentLen)
-	if _, err := buf.Read(item.content); err != nil {
+	if item.content, err = readSized(buf); err != nil {
 		return nil, err
 	}
 
@@ -397,53 +405,35 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 	}
 	item.status = int(status)
 
-	// Read the headers
 	var headerLen uint32
 	if err := binary.Read(buf, binary.LittleEndian, &headerLen); err != nil {
 		return nil, err
 	}
 	item.header = make(http.Header, headerLen)
 	for i := uint32(0); i < headerLen; i++ {
-		// Read the header key
-		var keyLen uint32
-		if err := binary.Read(buf, binary.LittleEndian, &keyLen); err != nil {
-			return nil, err
-		}
-		key := make([]byte, keyLen)
-		if _, err := buf.Read(key); err != nil {
+		key, err := readSized(buf)
+		if err != nil {
 			return nil, err
 		}
 
-		// Read the number of values for this header key
 		var valuesLen uint32
 		if err := binary.Read(buf, binary.LittleEndian, &valuesLen); err != nil {
 			return nil, err
 		}
 		values := make([]string, valuesLen)
 		for j := uint32(0); j < valuesLen; j++ {
-			// Read each value
-			var valueLen uint32
-			if err := binary.Read(buf, binary.LittleEndian, &valueLen); err != nil {
-				return nil, err
-			}
-			value := make([]byte, valueLen)
-			if _, err := buf.Read(value); err != nil {
+			value, err := readSized(buf)
+			if err != nil {
 				return nil, err
 			}
 			values[j] = string(value)
 		}
 
-		// Store the key-value pair in the header map
 		item.header[string(key)] = values
 	}
 
-	// Read expiration time
-	var expirationLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &expirationLen); err != nil {
-		return nil, err
-	}
-	expirationBytes := make([]byte, expirationLen)
-	if _, err := buf.Read(expirationBytes); err != nil {
+	expirationBytes, err := readSized(buf)
+	if err != nil {
 		return nil, err
 	}
 	if err := item.expiration.UnmarshalBinary(expirationBytes); err != nil {
