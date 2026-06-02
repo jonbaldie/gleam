@@ -5,3 +5,8 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# mutago output
+mutago-agentic.json
+mutago-summary.json
+report.json
