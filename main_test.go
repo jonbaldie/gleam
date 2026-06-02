@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -307,4 +311,238 @@ func mustCachingProxyHandler(t *testing.T, originURL string, cache Cache, ttl ti
 	}
 
 	return newCachingProxyHandler(origin, cache, ttl)
+}
+
+// TestSimpleCacheStoresAndReturnsHeaders kills gleam.go:82 (composite/field-clear drops
+// the header field from the stored CacheItem, causing cached responses to carry no headers).
+func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
+	cache := NewSimpleCache()
+	header := http.Header{
+		"Content-Type": {"application/json"},
+		"X-Request-Id": {"abc-123"},
+	}
+	cache.Set("k", []byte("body"), header, http.StatusOK, time.Minute)
+
+	item, found := cache.Get("k")
+	if !found {
+		t.Fatal("expected to find cached item")
+	}
+	if got := item.header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("expected cached Content-Type application/json, got %q", got)
+	}
+	if got := item.header.Get("X-Request-Id"); got != "abc-123" {
+		t.Errorf("expected cached X-Request-Id abc-123, got %q", got)
+	}
+}
+
+// TestLoadConfigFromEnvAcceptsCacheTypeRedis kills three mutations at gleam.go:214
+// (conditional/negated flips the redis check to ==, expression/remove drops the redis
+// term, expression/string-literal replaces "redis" with "") and gleam.go:230
+// (composite/field-clear drops CacheType from the returned Config).
+// All four mutations would either reject a valid "redis" value or lose the field.
+func TestLoadConfigFromEnvAcceptsCacheTypeRedis(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("CACHE_TYPE", "redis")
+
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected CACHE_TYPE=redis to be accepted, got error: %v", err)
+	}
+	if config.CacheType != "redis" {
+		t.Errorf("expected CacheType %q, got %q", "redis", config.CacheType)
+	}
+}
+
+// TestLoadConfigFromEnvAcceptsTTLMinutesOf1 kills gleam.go:208 (numbers/incrementer
+// changes the guard from <= 0 to <= 1, incorrectly rejecting TTL_MINUTES=1).
+func TestLoadConfigFromEnvAcceptsTTLMinutesOf1(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("TTL_MINUTES", "1")
+
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected TTL_MINUTES=1 to be valid, got error: %v", err)
+	}
+	if config.TTL != time.Minute {
+		t.Errorf("expected TTL 1m, got %v", config.TTL)
+	}
+}
+
+// TestProxyDoesNotCacheStatus300 kills gleam.go:47 (expression/comparison changes
+// crw.status < 300 to crw.status <= 300, causing status-300 responses to be cached).
+func TestProxyDoesNotCacheStatus300(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultipleChoices) // 300
+		_, _ = w.Write([]byte("choose"))
+	}))
+	defer origin.Close()
+
+	cache := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/page", nil))
+	if rec.Code != http.StatusMultipleChoices {
+		t.Fatalf("expected upstream status %d forwarded, got %d", http.StatusMultipleChoices, rec.Code)
+	}
+	if _, found := cache.Get("/page"); found {
+		t.Error("expected status-300 response to not be cached")
+	}
+}
+
+// TestProxyCopiesAllResponseHeadersOnCacheHit kills three mutations:
+//   - gleam.go:35 (loop/range_break inserts break at top of outer header loop, skipping all headers)
+//   - gleam.go:36 (loop/range_break inserts break at top of inner values loop, adding no values)
+//   - gleam.go:36 (statement/remove drops w.Header().Add, silently discarding each header value)
+//
+// All three produce a cache-hit response that is missing the upstream response headers.
+func TestProxyCopiesAllResponseHeadersOnCacheHit(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Custom-Header", "sentinel-value")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer origin.Close()
+
+	cache := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api", nil))
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api", nil))
+
+	if got := second.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("expected Content-Type %q from cache, got %q", "application/json", got)
+	}
+	if got := second.Header().Get("X-Custom-Header"); got != "sentinel-value" {
+		t.Errorf("expected X-Custom-Header %q from cache, got %q", "sentinel-value", got)
+	}
+	if body := second.Body.String(); body != `{"ok":true}` {
+		t.Errorf("expected cached body %q, got %q", `{"ok":true}`, body)
+	}
+}
+
+// TestParseOriginURLWrapsUnderlyingParseError kills gleam.go:237 (expression/errorf-wrap
+// downgrades %w to %v so the wrapped *url.Error is no longer reachable via errors.As).
+func TestParseOriginURLWrapsUnderlyingParseError(t *testing.T) {
+	// A tab character in the URL path causes url.Parse to return a *url.Error.
+	_, err := parseOriginURL("https://example.com/\tbad")
+	if err == nil {
+		t.Skip("url.Parse accepted this input on this Go version; skipping wrap test")
+	}
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		t.Errorf("expected error to wrap *url.Error (%%w), errors.As returned false; got: %v", err)
+	}
+}
+
+// TestCacheKeyForRequestIsDeterministicWithMultipleHeaders kills gleam.go:268
+// (statement/remove drops sort.Strings(headerNames), making the hash dependent on
+// non-deterministic map iteration order).
+// Running 30 iterations with 3 headers gives 3! = 6 possible orderings; the probability
+// that all 30 iterations happen to return the same unsorted order is negligible.
+func TestCacheKeyForRequestIsDeterministicWithMultipleHeaders(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r.Header.Set("Z-Last", "zval")
+	r.Header.Set("A-First", "aval")
+	r.Header.Set("M-Middle", "mval")
+
+	var want string
+	for i := 0; i < 30; i++ {
+		got := cacheKeyForRequest(r)
+		if i == 0 {
+			want = got
+		} else if got != want {
+			t.Fatalf("iteration %d: cache key non-deterministic: got %q, want %q", i, got, want)
+		}
+	}
+}
+
+// TestCacheKeyForRequestMultiValueHeaderOrderIsNormalized kills gleam.go:273
+// (statement/remove drops sort.Strings(values), so two requests with the same multi-value
+// header in different insertion order hash to different keys and miss the cache).
+func TestCacheKeyForRequestMultiValueHeaderOrderIsNormalized(t *testing.T) {
+	r1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r1.Header.Add("Accept", "text/html")
+	r1.Header.Add("Accept", "application/json")
+
+	r2 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r2.Header.Add("Accept", "application/json")
+	r2.Header.Add("Accept", "text/html")
+
+	if cacheKeyForRequest(r1) != cacheKeyForRequest(r2) {
+		t.Error("expected same cache key for identical multi-value headers regardless of insertion order")
+	}
+}
+
+// TestCacheKeyForRequestDependsOnHeaderName kills gleam.go:274 (statement/remove
+// drops signature.WriteString(name), so headers with different names but the same value
+// hash identically and collide in the cache).
+func TestCacheKeyForRequestDependsOnHeaderName(t *testing.T) {
+	r1 := httptest.NewRequest(http.MethodGet, "/path", nil)
+	r1.Header.Set("X-Header-Alpha", "same-value")
+
+	r2 := httptest.NewRequest(http.MethodGet, "/path", nil)
+	r2.Header.Set("X-Header-Beta", "same-value")
+
+	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+		t.Error("expected different cache keys for different header names with the same value")
+	}
+}
+
+// TestCacheKeyForRequestSeparatesHeaderNameFromValue kills gleam.go:275
+// (statement/remove drops signature.WriteByte(':'), so header name "A" value "bc"
+// and header name "Ab" value "c" both produce the raw string "Abc" and collide).
+func TestCacheKeyForRequestSeparatesHeaderNameFromValue(t *testing.T) {
+	// Without the ':' separator both produce the concatenation "Abc".
+	r1 := httptest.NewRequest(http.MethodGet, "/path", nil)
+	r1.Header.Set("A", "bc")
+
+	r2 := httptest.NewRequest(http.MethodGet, "/path", nil)
+	r2.Header.Set("Ab", "c")
+
+	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+		t.Error("expected different cache keys: header name and value must be delimited by ':'")
+	}
+}
+
+// TestCacheKeyForRequestSeparatesHeaderEntries kills gleam.go:277 (statement/remove
+// drops signature.WriteByte('\n'), so two headers "A"="val","B"="val2" concatenate to
+// "A:valB:val2" — identical to one header "A"="valB:val2" — causing a collision).
+func TestCacheKeyForRequestSeparatesHeaderEntries(t *testing.T) {
+	// Without '\n' both produce the concatenation "A:valB:val2".
+	r1 := httptest.NewRequest(http.MethodGet, "/path", nil)
+	r1.Header.Set("A", "val")
+	r1.Header.Set("B", "val2")
+
+	r2 := httptest.NewRequest(http.MethodGet, "/path", nil)
+	r2.Header.Set("A", "valB:val2")
+
+	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+		t.Error("expected different cache keys: header entries must be separated by a newline")
+	}
+}
+
+// TestSimpleCacheConcurrentSetsDoNotRace kills gleam.go:79 (statement/defer-remove
+// converts "defer c.mu.Unlock()" to an immediate unlock, releasing the mutex before
+// the map write and causing a concurrent-map-write panic under contention).
+func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
+	cache := NewSimpleCache()
+	var wg sync.WaitGroup
+	const N = 200
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func(n int) {
+			defer wg.Done()
+			// Deliberately reuse a small key space to maximise concurrent access
+			// to the same map bucket, reliably triggering Go's built-in
+			// concurrent-map-write detector if the mutex is not held.
+			key := fmt.Sprintf("key-%d", n%5)
+			cache.Set(key, []byte(fmt.Sprintf("v%d", n)), http.Header{}, http.StatusOK, time.Minute)
+		}(i)
+	}
+	wg.Wait()
 }
