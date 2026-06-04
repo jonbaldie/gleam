@@ -46,3 +46,49 @@ func newTestRequest(path, hkey, hval string) *http.Request {
 	}
 	return r
 }
+
+func FuzzCacheKeyCollisionSearch(f *testing.F) {
+	f.Add("A", "B\nC:D", "A", "B", "C", "D")
+	f.Fuzz(func(t *testing.T, hname1, hval1, hname2, hval2, hname3, hval3 string) {
+		r1 := newTestRequest("/", hname1, hval1)
+		r2 := &http.Request{
+			Method:     "GET",
+			URL:        &url.URL{Path: "/"},
+			Header:     http.Header{},
+			RequestURI: "/",
+		}
+		if hname2 != "" {
+			r2.Header.Add(hname2, hval2)
+		}
+		if hname3 != "" {
+			r2.Header.Add(hname3, hval3)
+		}
+
+		if !headersEqual(r1.Header, r2.Header) {
+			k1 := cacheKeyForRequest(r1)
+			k2 := cacheKeyForRequest(r2)
+			if k1 == k2 {
+				t.Fatalf("Cache key collision found!\nReq1 header: %v\nReq2 header: %v\nBoth keys: %s", r1.Header, r2.Header, k1)
+			}
+		}
+	})
+}
+
+func headersEqual(h1, h2 http.Header) bool {
+	if len(h1) != len(h2) {
+		return false
+	}
+	for k, v1 := range h1 {
+		v2, ok := h2[k]
+		if !ok || len(v1) != len(v2) {
+			return false
+		}
+		for i := range v1 {
+			if v1[i] != v2[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+

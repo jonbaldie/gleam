@@ -1,4 +1,7 @@
+//go:build fuzz
+
 package main
+
 
 import (
 	"net/http"

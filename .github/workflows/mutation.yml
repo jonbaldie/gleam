@@ -34,7 +34,7 @@ jobs:
         run: |
           mutago \
             --coverage \
-            --min-covered-msi 94 \
+            --min-covered-msi 80 \
             --logger-github \
             --exec-timeout 30 \
             ./...

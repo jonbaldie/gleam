@@ -257,7 +257,7 @@ func getenv(key, fallback string) string {
 // Include request headers in the cache key so one caller's GET response is not
 // served to another caller with different request metadata.
 func cacheKeyForRequest(r *http.Request) string {
-	base := r.URL.String()
+	base := r.Host + "#" + r.URL.String()
 	if len(r.Header) == 0 {
 		return base
 	}
@@ -272,15 +272,22 @@ func cacheKeyForRequest(r *http.Request) string {
 	for _, name := range headerNames {
 		values := append([]string(nil), r.Header.Values(name)...)
 		sort.Strings(values)
-		signature.WriteString(name)
+		safeName := strings.ReplaceAll(name, "\n", "\\n")
+		signature.WriteString(safeName)
 		signature.WriteByte(':')
-		signature.WriteString(strings.Join(values, "\x00"))
+		escapedValues := make([]string, len(values))
+		for i, val := range values {
+			escaped := strings.ReplaceAll(val, "\n", "\\n")
+			escapedValues[i] = strings.ReplaceAll(escaped, "\x00", "\\0")
+		}
+		signature.WriteString(strings.Join(escapedValues, "\x00"))
 		signature.WriteByte('\n')
 	}
 
 	sum := sha256.Sum256([]byte(signature.String()))
 	return base + "#h=" + hex.EncodeToString(sum[:])
 }
+
 
 func main() {
 	config := loadConfig()
@@ -418,6 +425,9 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 	var status uint32
 	if err := binary.Read(buf, binary.LittleEndian, &status); err != nil {
 		return nil, err
+	}
+	if status < 100 || status > 999 {
+		return nil, fmt.Errorf("cache item: invalid status code %d", status)
 	}
 	item.status = int(status)
 
