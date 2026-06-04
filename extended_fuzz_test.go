@@ -91,4 +91,3 @@ func headersEqual(h1, h2 http.Header) bool {
 	}
 	return true
 }
-

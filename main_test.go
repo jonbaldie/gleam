@@ -540,7 +540,6 @@ func TestCacheKeyForRequestDifferentPathsNoHeaders(t *testing.T) {
 	}
 }
 
-
 // TestCacheResponseWriterDefaultsToStatusOK kills gleam.go:44 (composite/field-clear
 // drops status: http.StatusOK from the CacheResponseWriter literal, leaving status at its
 // zero value 0). If WriteHeader is never called — which cannot happen with httputil.ReverseProxy
@@ -598,7 +597,6 @@ func TestCacheKeyForRequestNoHeadersHasNoHash(t *testing.T) {
 		t.Error("expected cache key to not contain hash suffix when headers are empty")
 	}
 }
-
 
 // TestCacheKeyForRequestDoesNotCollideOnCommaInValue guards against the bug where
 // strings.Join(values, ",") was used to serialise per-header values, making two requests

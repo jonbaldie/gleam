@@ -288,7 +288,6 @@ func cacheKeyForRequest(r *http.Request) string {
 	return base + "#h=" + hex.EncodeToString(sum[:])
 }
 
-
 func main() {
 	config := loadConfig()
 
