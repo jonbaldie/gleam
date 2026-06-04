@@ -10,3 +10,12 @@
 mutago-agentic.json
 mutago-summary.json
 report.json
+
+# Gas City
+.beads/*
+!.beads/config.yaml
+!.beads/metadata.json
+!.beads/identity.toml
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/
