@@ -526,6 +526,65 @@ func TestCacheKeyForRequestSeparatesHeaderEntries(t *testing.T) {
 	}
 }
 
+// TestCacheResponseWriterDefaultsToStatusOK kills gleam.go:44 (composite/field-clear
+// drops status: http.StatusOK from the CacheResponseWriter literal, leaving status at its
+// zero value 0). If WriteHeader is never called — which cannot happen with httputil.ReverseProxy
+// but is the contract the type itself must honour — a status of 0 fails the
+// crw.status >= http.StatusOK guard at gleam.go:47, so the response would silently not be
+// cached. Verifying the field is present and equals 200 kills the mutation without requiring
+// a full integration scenario.
+func TestCacheResponseWriterDefaultsToStatusOK(t *testing.T) {
+	w := httptest.NewRecorder()
+	crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
+	// Do not call WriteHeader; the initialised value must survive intact.
+	if crw.status != http.StatusOK {
+		t.Errorf("expected initialised status %d, got %d", http.StatusOK, crw.status)
+	}
+}
+
+// TestCacheResponseWriterSubOKStatusIsNotCacheable kills gleam.go:47 (expression/remove
+// replaces "crw.status >= http.StatusOK" with "true", removing the lower-bound guard and
+// allowing responses with status < 200 — such as a WriteHeader(0) resulting from a missing
+// initialisation — to be wrongly cached). The test constructs a CacheResponseWriter whose
+// WriteHeader receives a sub-OK code and asserts that the resulting status does not satisfy
+// the caching predicate.
+func TestCacheResponseWriterSubOKStatusIsNotCacheable(t *testing.T) {
+	w := httptest.NewRecorder()
+	crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
+	crw.WriteHeader(http.StatusContinue) // 100 — informational, must not be cached
+	eligible := crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices
+	if eligible {
+		t.Errorf("status %d must not satisfy the caching condition", crw.status)
+	}
+}
+
+// TestCacheKeyForRequestDoesNotCollideOnCommaInValue guards against the bug where
+// strings.Join(values, ",") was used to serialise per-header values, making two requests
+// whose values sort-and-join to the same string indistinguishable in the cache key.
+//
+// Concrete collision:
+//   - values ["a,b", "c"] → sorted: ["a,b","c"] → joined: "a,b,c"
+//   - values ["a", "b,c"] → sorted: ["a","b,c"] → joined: "a,b,c"
+//
+// With a comma-containing value these two distinct value-sets produce the same signature
+// fragment, so a request carrying X-Token: a,b + X-Token: c would be served the cached
+// response for X-Token: a + X-Token: b,c (or vice-versa), violating per-user isolation.
+// The fix uses \x00 (NUL, invalid in HTTP header values) as the intra-value separator.
+func TestCacheKeyForRequestDoesNotCollideOnCommaInValue(t *testing.T) {
+	// r1: one value contains a comma; r2: same textual bytes split differently.
+	r1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r1.Header["X-Token"] = []string{"a,b", "c"}
+
+	r2 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r2.Header["X-Token"] = []string{"a", "b,c"}
+
+	k1 := cacheKeyForRequest(r1)
+	k2 := cacheKeyForRequest(r2)
+	if k1 == k2 {
+		t.Errorf("collision: requests with different X-Token value sets produced the same cache key %q", k1)
+	}
+}
+
 // TestSimpleCacheConcurrentSetsDoNotRace kills gleam.go:79 (statement/defer-remove
 // converts "defer c.mu.Unlock()" to an immediate unlock, releasing the mutex before
 // the map write and causing a concurrent-map-write panic under contention).

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"github.com/go-redis/redis/v8"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -273,7 +274,7 @@ func cacheKeyForRequest(r *http.Request) string {
 		sort.Strings(values)
 		signature.WriteString(name)
 		signature.WriteByte(':')
-		signature.WriteString(strings.Join(values, ","))
+		signature.WriteString(strings.Join(values, "\x00"))
 		signature.WriteByte('\n')
 	}
 
@@ -371,16 +372,31 @@ func encodeCacheItem(item CacheItem) ([]byte, error) {
 	return []byte(encoded), nil
 }
 
+// readCount reads a uint32 length/count prefix and rejects any value that
+// cannot be backed by the bytes remaining in r. Cache entries come from Redis
+// and may be corrupt or maliciously crafted; without this bound a prefix of
+// 0xFFFFFFFF would drive a multi-gigabyte allocation from a few input bytes.
+func readCount(r *bytes.Reader) (uint32, error) {
+	var n uint32
+	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
+		return 0, err
+	}
+	if int64(n) > int64(r.Len()) {
+		return 0, fmt.Errorf("cache item: prefix %d exceeds %d remaining bytes", n, r.Len())
+	}
+	return n, nil
+}
+
 // readSized reads a uint32 length prefix then exactly that many bytes from r.
 // It collapses the repeated binary.Read/buf.Read pairs in decodeCacheItem,
 // keeping cyclomatic complexity under the gocyclo threshold of 15.
 func readSized(r *bytes.Reader) ([]byte, error) {
-	var n uint32
-	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
+	n, err := readCount(r)
+	if err != nil {
 		return nil, err
 	}
 	b := make([]byte, n)
-	if _, err := r.Read(b); err != nil {
+	if _, err := io.ReadFull(r, b); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -405,8 +421,8 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 	}
 	item.status = int(status)
 
-	var headerLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &headerLen); err != nil {
+	headerLen, err := readCount(buf)
+	if err != nil {
 		return nil, err
 	}
 	item.header = make(http.Header, headerLen)
@@ -416,8 +432,8 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 			return nil, err
 		}
 
-		var valuesLen uint32
-		if err := binary.Read(buf, binary.LittleEndian, &valuesLen); err != nil {
+		valuesLen, err := readCount(buf)
+		if err != nil {
 			return nil, err
 		}
 		values := make([]string, valuesLen)
