@@ -172,13 +172,14 @@ func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
 	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
 
 	first := httptest.NewRecorder()
-	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	handler.ServeHTTP(first, req)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("expected first response status %d, got %d", http.StatusCreated, first.Code)
 	}
 
 	second := httptest.NewRecorder()
-	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	handler.ServeHTTP(second, req)
 	if second.Code != http.StatusCreated {
 		t.Fatalf("expected cached response status %d, got %d", http.StatusCreated, second.Code)
 	}
@@ -188,7 +189,7 @@ func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
 	if got := originCalls.Load(); got != 1 {
 		t.Fatalf("expected one origin call after cache hit, got %d", got)
 	}
-	if item, found := cache.Get("/resource"); !found {
+	if item, found := cache.Get(cacheKeyForRequest(req)); !found {
 		t.Fatal("expected successful response to be cached")
 	} else if item.status != http.StatusCreated {
 		t.Fatalf("expected cached item status %d, got %d", http.StatusCreated, item.status)
@@ -213,16 +214,17 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
 
 	first := httptest.NewRecorder()
-	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/flaky", nil))
+	req := httptest.NewRequest(http.MethodGet, "/flaky", nil)
+	handler.ServeHTTP(first, req)
 	if first.Code != http.StatusBadGateway {
 		t.Fatalf("expected first response status %d, got %d", http.StatusBadGateway, first.Code)
 	}
-	if _, found := cache.Get("/flaky"); found {
+	if _, found := cache.Get(cacheKeyForRequest(req)); found {
 		t.Fatal("expected transient failure response to not be cached")
 	}
 
 	second := httptest.NewRecorder()
-	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/flaky", nil))
+	handler.ServeHTTP(second, req)
 	if second.Code != http.StatusOK {
 		t.Fatalf("expected recovery response status %d, got %d", http.StatusOK, second.Code)
 	}
@@ -232,7 +234,7 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	if got := originCalls.Load(); got != 2 {
 		t.Fatalf("expected second request to reach origin after failure, got %d calls", got)
 	}
-	if item, found := cache.Get("/flaky"); !found {
+	if item, found := cache.Get(cacheKeyForRequest(req)); !found {
 		t.Fatal("expected recovered response to be cached")
 	} else if item.status != http.StatusOK {
 		t.Fatalf("expected cached recovery status %d, got %d", http.StatusOK, item.status)
@@ -381,11 +383,12 @@ func TestProxyDoesNotCacheStatus300(t *testing.T) {
 	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/page", nil))
+	req := httptest.NewRequest(http.MethodGet, "/page", nil)
+	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMultipleChoices {
 		t.Fatalf("expected upstream status %d forwarded, got %d", http.StatusMultipleChoices, rec.Code)
 	}
-	if _, found := cache.Get("/page"); found {
+	if _, found := cache.Get(cacheKeyForRequest(req)); found {
 		t.Error("expected status-300 response to not be cached")
 	}
 }
@@ -526,6 +529,17 @@ func TestCacheKeyForRequestSeparatesHeaderEntries(t *testing.T) {
 	}
 }
 
+// TestCacheKeyForRequestDifferentPathsNoHeaders kills the return base mutant
+// by ensuring that two requests with different paths but no headers still
+// generate distinct keys.
+func TestCacheKeyForRequestDifferentPathsNoHeaders(t *testing.T) {
+	r1 := httptest.NewRequest(http.MethodGet, "/path1", nil)
+	r2 := httptest.NewRequest(http.MethodGet, "/path2", nil)
+	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+		t.Error("expected different cache keys for different paths with no headers")
+	}
+}
+
 // TestCacheResponseWriterDefaultsToStatusOK kills gleam.go:44 (composite/field-clear
 // drops status: http.StatusOK from the CacheResponseWriter literal, leaving status at its
 // zero value 0). If WriteHeader is never called — which cannot happen with httputil.ReverseProxy
@@ -542,19 +556,45 @@ func TestCacheResponseWriterDefaultsToStatusOK(t *testing.T) {
 	}
 }
 
-// TestCacheResponseWriterSubOKStatusIsNotCacheable kills gleam.go:47 (expression/remove
-// replaces "crw.status >= http.StatusOK" with "true", removing the lower-bound guard and
-// allowing responses with status < 200 — such as a WriteHeader(0) resulting from a missing
-// initialisation — to be wrongly cached). The test constructs a CacheResponseWriter whose
-// WriteHeader receives a sub-OK code and asserts that the resulting status does not satisfy
-// the caching predicate.
 func TestCacheResponseWriterSubOKStatusIsNotCacheable(t *testing.T) {
-	w := httptest.NewRecorder()
-	crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
-	crw.WriteHeader(http.StatusContinue) // 100 — informational, must not be cached
-	eligible := crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices
-	if eligible {
-		t.Errorf("status %d must not satisfy the caching condition", crw.status)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("expected hijacker")
+			return
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 199 Custom Status\r\nContent-Length: 0\r\n\r\n")
+		_ = buf.Flush()
+	}))
+	defer origin.Close()
+
+	cache := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/informational", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != 199 {
+		t.Fatalf("expected upstream status 199 forwarded, got %d", rec.Code)
+	}
+	if _, found := cache.Get(cacheKeyForRequest(req)); found {
+		t.Error("expected status-199 response to not be cached")
+	}
+}
+
+// TestCacheKeyForRequestNoHeadersHasNoHash kills the return base branch/if and numbers/decrementer
+// mutants by ensuring that when headers are empty, the cache key does not contain the hash suffix.
+func TestCacheKeyForRequestNoHeadersHasNoHash(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/path", nil)
+	key := cacheKeyForRequest(r)
+	if strings.Contains(key, "#h=") {
+		t.Error("expected cache key to not contain hash suffix when headers are empty")
 	}
 }
 
