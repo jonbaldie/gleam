@@ -324,9 +324,6 @@ func encodeCacheItem(item CacheItem) ([]byte, error) {
 	}
 
 	status := uint32(item.status)
-	if status < 100 || status > 999 {
-		return nil, fmt.Errorf("cache item: invalid status code %d", status)
-	}
 	if err := binary.Write(&buf, binary.LittleEndian, status); err != nil {
 		return nil, err
 	}
