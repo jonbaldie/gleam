@@ -54,6 +54,38 @@ func TestCacheResponseWriter(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnvDefaults(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "")
+	t.Setenv("TTL_MINUTES", "")
+	t.Setenv("PORT", "")
+	t.Setenv("REDIS_URL", "")
+	t.Setenv("CACHE_TYPE", "")
+
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected defaults to load, got error: %v", err)
+	}
+
+	if config.OriginURL != "https://httpbin.org" {
+		t.Errorf("Expected default OriginURL https://httpbin.org, got %s", config.OriginURL)
+	}
+	if config.Origin.String() != "https://httpbin.org" {
+		t.Errorf("Expected default Origin https://httpbin.org, got %s", config.Origin.String())
+	}
+	if config.TTL != 5*time.Minute {
+		t.Errorf("Expected default TTL 5m, got %v", config.TTL)
+	}
+	if config.Port != "8080" {
+		t.Errorf("Expected default Port 8080, got %s", config.Port)
+	}
+	if config.RedisURL != "redis://localhost:6379/0" {
+		t.Errorf("Expected default RedisURL redis://localhost:6379/0, got %s", config.RedisURL)
+	}
+	if config.CacheType != "memory" {
+		t.Errorf("Expected default CacheType memory, got %s", config.CacheType)
+	}
+}
+
 func TestLoadConfigFromEnvAcceptsPositiveTTLMinutes(t *testing.T) {
 	t.Setenv("ORIGIN_URL", "https://example.com")
 	t.Setenv("TTL_MINUTES", "10")
