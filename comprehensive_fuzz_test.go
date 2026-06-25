@@ -14,25 +14,25 @@ func FuzzDecodeCacheItemWithMutations(f *testing.F) {
 	// Create some valid cache items and add their encodings
 	testCases := []CacheItem{
 		{
-			content:    []byte(""),
-			header:     http.Header{},
-			status:     200,
-			expiration: time.Unix(0, 0),
+			Content:    []byte(""),
+			Header:     http.Header{},
+			Status:     200,
+			Expiration: time.Unix(0, 0),
 		},
 		{
-			content:    []byte("hello world"),
-			header:     http.Header{"Content-Type": {"text/plain"}},
-			status:     200,
-			expiration: time.Now(),
+			Content:    []byte("hello world"),
+			Header:     http.Header{"Content-Type": {"text/plain"}},
+			Status:     200,
+			Expiration: time.Now(),
 		},
 		{
-			content: []byte("test data"),
-			header: http.Header{
+			Content: []byte("test data"),
+			Header: http.Header{
 				"X-Custom-1": {"value1"},
 				"X-Custom-2": {"value2", "value3"},
 			},
-			status:     404,
-			expiration: time.Unix(1000000, 0),
+			Status:     404,
+			Expiration: time.Unix(1000000, 0),
 		},
 	}
 
@@ -75,10 +75,10 @@ func FuzzHeaderRoundTrip(f *testing.F) {
 		}
 
 		item := CacheItem{
-			content:    []byte(content),
-			header:     original,
-			status:     int(status),
-			expiration: time.Now().Truncate(time.Second),
+			Content:    []byte(content),
+			Header:     original,
+			Status:     int(status),
+			Expiration: time.Now().Truncate(time.Second),
 		}
 
 		codec := &BinaryCodec{}
@@ -93,18 +93,18 @@ func FuzzHeaderRoundTrip(f *testing.F) {
 		}
 
 		// Check content
-		if !bytes.Equal(decoded.content, item.content) {
+		if !bytes.Equal(decoded.Content, item.Content) {
 			t.Fatalf("content mismatch")
 		}
 
 		// Check status
-		if decoded.status != item.status {
-			t.Fatalf("status mismatch: got %d, want %d", decoded.status, item.status)
+		if decoded.Status != item.Status {
+			t.Fatalf("status mismatch: got %d, want %d", decoded.Status, item.Status)
 		}
 
 		// Check headers
 		for key, values := range original {
-			decodedValues := decoded.header[key]
+			decodedValues := decoded.Header[key]
 			if len(decodedValues) != len(values) {
 				t.Fatalf("header value count mismatch for %q", key)
 			}
@@ -127,10 +127,10 @@ func FuzzStatusCodesExhaustive(f *testing.F) {
 				return
 			}
 			item := CacheItem{
-				content:    content,
-				header:     http.Header{},
-				status:     int(s),
-				expiration: time.Now(),
+				Content:    content,
+				Header:     http.Header{},
+				Status:     int(s),
+				Expiration: time.Now(),
 			}
 			codec := &BinaryCodec{}
 			enc, err := codec.Encode(item)
@@ -141,7 +141,7 @@ func FuzzStatusCodesExhaustive(f *testing.F) {
 			if err != nil {
 				t.Fatalf("failed to decode status %d", s)
 			}
-			if dec.status != int(s) {
+			if dec.Status != int(s) {
 				t.Fatalf("status mismatch for %d", s)
 			}
 		}
@@ -161,10 +161,10 @@ func FuzzLargeContent(f *testing.F) {
 		}
 
 		item := CacheItem{
-			content:    content,
-			header:     http.Header{"Content-Length": {string(rune(len(content)))}},
-			status:     200,
-			expiration: time.Now(),
+			Content:    content,
+			Header:     http.Header{"Content-Length": {string(rune(len(content)))}},
+			Status:     200,
+			Expiration: time.Now(),
 		}
 
 		codec := &BinaryCodec{}
@@ -175,10 +175,10 @@ func FuzzLargeContent(f *testing.F) {
 
 		dec, err := codec.Decode(enc)
 		if err != nil {
-			t.Fatalf("failed to decode large content: %v", err)
+			t.Fatalf("failed to decode large Content: %v", err)
 		}
 
-		if !bytes.Equal(dec.content, content) {
+		if !bytes.Equal(dec.Content, content) {
 			t.Fatalf("large content mismatch")
 		}
 	})

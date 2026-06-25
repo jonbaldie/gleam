@@ -29,7 +29,7 @@ func TestRedisCache_DelegatesToCodec(t *testing.T) {
 		// client is nil
 	}
 
-	cache.Set("test_key", CacheItem{content: []byte("data"), status: 200}, time.Minute)
+	cache.Set("test_key", CacheItem{Content: []byte("data"), Status: 200}, time.Minute)
 
 	if !codec.encodeCalled {
 		t.Errorf("expected RedisCache.Set to call Codec.Encode")

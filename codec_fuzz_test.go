@@ -18,7 +18,7 @@ func FuzzDecodeCacheItem(f *testing.F) {
 	f.Add([]byte("AAAAAMgAAAABAAAAAAAAAP////8="))
 	hdr := http.Header{"Content-Type": {"text/plain"}}
 	codec := &BinaryCodec{}
-	if enc, err := codec.Encode(CacheItem{content: []byte("hi"), header: hdr, status: 200, expiration: time.Unix(0, 0)}); err == nil {
+	if enc, err := codec.Encode(CacheItem{Content: []byte("hi"), Header: hdr, Status: 200, Expiration: time.Unix(0, 0)}); err == nil {
 		f.Add(enc)
 	}
 	f.Fuzz(func(t *testing.T, data []byte) { 
@@ -38,7 +38,7 @@ func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 		if hkey != "" {
 			hdr.Add(hkey, hval)
 		}
-		in := CacheItem{content: []byte(body), header: hdr, status: status, expiration: time.Now().Truncate(0)}
+		in := CacheItem{Content: []byte(body), Header: hdr, Status: status, Expiration: time.Now().Truncate(0)}
 		codec := &BinaryCodec{}
 		enc, err := codec.Encode(in)
 		if err != nil {
@@ -48,7 +48,7 @@ func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 		if err != nil {
 			t.Fatalf("decode of freshly encoded item failed: %v", err)
 		}
-		if string(out.content) != body || out.status != status {
+		if string(out.Content) != body || out.Status != status {
 			t.Fatalf("round-trip mismatch")
 		}
 	})

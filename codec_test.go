@@ -13,10 +13,10 @@ func TestBinaryCodec_ImplementsCodec(t *testing.T) {
 func TestBinaryCodec_RoundTrip(t *testing.T) {
 	codec := &BinaryCodec{}
 	item := CacheItem{
-		content:    []byte("test"),
-		header:     http.Header{"X-Test": {"1"}},
-		status:     200,
-		expiration: time.Now().Truncate(time.Second),
+		Content:    []byte("test"),
+		Header:     http.Header{"X-Test": {"1"}},
+		Status:     200,
+		Expiration: time.Now().Truncate(time.Second),
 	}
 
 	data, err := codec.Encode(item)
@@ -29,7 +29,7 @@ func TestBinaryCodec_RoundTrip(t *testing.T) {
 		t.Fatalf("Decode failed: %v", err)
 	}
 
-	if string(decoded.content) != string(item.content) {
+	if string(decoded.Content) != string(item.Content) {
 		t.Errorf("content mismatch")
 	}
 }

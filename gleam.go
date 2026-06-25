@@ -32,13 +32,13 @@ func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) htt
 		if r.Method == http.MethodGet {
 			cacheKey := cacheKeyForRequest(r)
 			if cachedItem, found := cache.Get(cacheKey); found {
-				for key, values := range cachedItem.header {
+				for key, values := range cachedItem.Header {
 					for _, value := range values {
 						w.Header().Add(key, value)
 					}
 				}
-				w.WriteHeader(cachedItem.status)
-				_, _ = w.Write(cachedItem.content)
+				w.WriteHeader(cachedItem.Status)
+				_, _ = w.Write(cachedItem.Content)
 				return
 			}
 
@@ -46,7 +46,7 @@ func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) htt
 			proxy.ServeHTTP(crw, r)
 
 			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
-				cache.Set(cacheKey, CacheItem{content: crw.buf.Bytes(), header: crw.Header(), status: crw.status}, ttl)
+				cache.Set(cacheKey, CacheItem{Content: crw.buf.Bytes(), Header: crw.Header(), Status: crw.status}, ttl)
 			}
 			return
 		}
@@ -68,10 +68,10 @@ type SimpleCache struct {
 
 // CacheItem represents a single cache entry
 type CacheItem struct {
-	content    []byte
-	header     http.Header
-	status     int
-	expiration time.Time
+	Content    []byte
+	Header     http.Header
+	Status     int
+	Expiration time.Time
 }
 
 // Set stores data in the cache
@@ -80,10 +80,10 @@ func (c *SimpleCache) Set(key string, item CacheItem, ttl time.Duration) {
 	defer c.mu.Unlock()
 
 	c.store[key] = &CacheItem{
-		content:    item.content,
-		header:     item.header,
-		status:     item.status,
-		expiration: time.Now().Add(ttl),
+		Content:    item.Content,
+		Header:     item.Header,
+		Status:     item.Status,
+		Expiration: time.Now().Add(ttl),
 	}
 }
 
@@ -93,7 +93,7 @@ func (c *SimpleCache) Get(key string) (*CacheItem, bool) {
 	defer c.mu.Unlock()
 
 	item, found := c.store[key]
-	if !found || item.expiration.Before(time.Now()) {
+	if !found || item.Expiration.Before(time.Now()) {
 		return nil, false
 	}
 	return item, true
@@ -330,15 +330,15 @@ func encodeCacheItem(item CacheItem) ([]byte, error) {
 	var buf bytes.Buffer
 
 	// Write content length and content
-	contentLen := uint32(len(item.content))
+	contentLen := uint32(len(item.Content))
 	if err := binary.Write(&buf, binary.LittleEndian, contentLen); err != nil {
 		return nil, err
 	}
-	if _, err := buf.Write(item.content); err != nil {
+	if _, err := buf.Write(item.Content); err != nil {
 		return nil, err
 	}
 
-	status := uint32(item.status)
+	status := uint32(item.Status)
 	if status < 100 || status > 999 {
 		return nil, fmt.Errorf("cache item: invalid status code %d", status)
 	}
@@ -347,11 +347,11 @@ func encodeCacheItem(item CacheItem) ([]byte, error) {
 	}
 
 	// Write the headers
-	headerLen := uint32(len(item.header))
+	headerLen := uint32(len(item.Header))
 	if err := binary.Write(&buf, binary.LittleEndian, headerLen); err != nil {
 		return nil, err
 	}
-	for key, values := range item.header {
+	for key, values := range item.Header {
 		// Write the header key
 		keyLen := uint32(len(key))
 		if err := binary.Write(&buf, binary.LittleEndian, keyLen); err != nil {
@@ -379,7 +379,7 @@ func encodeCacheItem(item CacheItem) ([]byte, error) {
 	}
 
 	// Write expiration time
-	expirationBytes, err := item.expiration.MarshalBinary()
+	expirationBytes, err := item.Expiration.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +435,7 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 	buf := bytes.NewReader(decoded)
 	item := &CacheItem{}
 
-	if item.content, err = readSized(buf); err != nil {
+	if item.Content, err = readSized(buf); err != nil {
 		return nil, err
 	}
 
@@ -446,13 +446,13 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 	if status < 100 || status > 999 {
 		return nil, fmt.Errorf("cache item: invalid status code %d", status)
 	}
-	item.status = int(status)
+	item.Status = int(status)
 
 	headerLen, err := readCount(buf)
 	if err != nil {
 		return nil, err
 	}
-	item.header = make(http.Header, headerLen)
+	item.Header = make(http.Header, headerLen)
 	for i := uint32(0); i < headerLen; i++ {
 		key, err := readSized(buf)
 		if err != nil {
@@ -472,14 +472,14 @@ func decodeCacheItem(data []byte) (*CacheItem, error) {
 			values[j] = string(value)
 		}
 
-		item.header[string(key)] = values
+		item.Header[string(key)] = values
 	}
 
 	expirationBytes, err := readSized(buf)
 	if err != nil {
 		return nil, err
 	}
-	if err := item.expiration.UnmarshalBinary(expirationBytes); err != nil {
+	if err := item.Expiration.UnmarshalBinary(expirationBytes); err != nil {
 		return nil, err
 	}
 
