@@ -41,10 +41,15 @@ func TestEncode_InvalidStatus(t *testing.T) {
 type failingWriter struct {
 	failAfter int
 	written   int
+	failed    bool
 }
 
 func (f *failingWriter) Write(p []byte) (int, error) {
+	if f.failed {
+		panic("Write called after returning error!")
+	}
 	if f.written+len(p) > f.failAfter {
+		f.failed = true
 		return 0, fmt.Errorf("mock write error")
 	}
 	f.written += len(p)
@@ -121,10 +126,10 @@ func TestReadCount_Exceeds(t *testing.T) {
 	reader := bytes.NewReader([]byte{0xff, 0xff, 0xff, 0xff, 0x00})
 	n, err := readCount(reader)
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Errorf("Expected exceeds error, got %v", err)
+		t.Fatalf("Expected exceeds error, got %v", err)
 	}
 	if n != 0 {
-		t.Errorf("Expected n=0 on error, got %v", n)
+		t.Fatalf("Expected n=0 on error, got %v", n)
 	}
 
 	reader = bytes.NewReader([]byte{})
@@ -133,6 +138,17 @@ func TestReadCount_Exceeds(t *testing.T) {
 		t.Errorf("Expected EOF error")
 	}
 	if n != 0 {
-		t.Errorf("Expected n=0 on error, got %v", n)
+		t.Fatalf("Expected n=0 on error, got %v", n)
+	}
+}
+
+func TestReadCount_UnexpectedEOF(t *testing.T) {
+	reader := bytes.NewReader([]byte{0x01, 0x02})
+	n, err := readCount(reader)
+	if err == nil {
+		t.Fatalf("Expected EOF error")
+	}
+	if n != 0 {
+		t.Fatalf("Expected n=0 on error, got %v", n)
 	}
 }
