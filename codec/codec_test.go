@@ -1,4 +1,4 @@
-package main
+package codec
 
 import (
 	"jonbaldie/gleam/cache"
@@ -32,5 +32,14 @@ func TestBinaryCodec_RoundTrip(t *testing.T) {
 
 	if string(decoded.Content) != string(item.Content) {
 		t.Errorf("content mismatch")
+	}
+	if decoded.Status != item.Status {
+		t.Errorf("status mismatch: got %v, want %v", decoded.Status, item.Status)
+	}
+	if len(decoded.Header) != len(item.Header) || decoded.Header.Get("X-Test") != "1" {
+		t.Errorf("header mismatch: got %v", decoded.Header)
+	}
+	if !decoded.Expiration.Equal(item.Expiration) {
+		t.Errorf("expiration mismatch: got %v, want %v", decoded.Expiration, item.Expiration)
 	}
 }
