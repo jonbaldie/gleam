@@ -106,13 +106,33 @@ func NewSimpleCache() *SimpleCache {
 	}
 }
 
+// Codec defines an interface for serialization of cache items.
+type Codec interface {
+	Encode(item CacheItem) ([]byte, error)
+	Decode(data []byte) (*CacheItem, error)
+}
+
+// BinaryCodec implements the Codec interface using a binary format.
+type BinaryCodec struct{}
+
+// Encode serializes a CacheItem to a byte slice.
+func (c *BinaryCodec) Encode(item CacheItem) ([]byte, error) {
+	return encodeCacheItem(item)
+}
+
+// Decode deserializes a byte slice back into a CacheItem.
+func (c *BinaryCodec) Decode(data []byte) (*CacheItem, error) {
+	return decodeCacheItem(data)
+}
+
 // RedisCache implements the Cache interface using Redis
 type RedisCache struct {
 	client *redis.Client
+	codec  Codec
 }
 
 // NewRedisCache initializes and returns a new RedisCache using a single Redis URL
-func NewRedisCache(redisURL string) *RedisCache {
+func NewRedisCache(redisURL string, codec Codec) *RedisCache {
 	// Parse the Redis URL
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -123,12 +143,13 @@ func NewRedisCache(redisURL string) *RedisCache {
 	rdb := redis.NewClient(opt)
 	return &RedisCache{
 		client: rdb,
+		codec:  codec,
 	}
 }
 
 // Set stores data in Redis
 func (r *RedisCache) Set(key string, item CacheItem, ttl time.Duration) {
-	itemBytes, err := encodeCacheItem(item)
+	itemBytes, err := r.codec.Encode(item)
 	if err != nil {
 		log.Printf("failed to encode cache item for key %q: %v", key, err)
 		return
@@ -148,7 +169,7 @@ func (r *RedisCache) Get(key string) (*CacheItem, bool) {
 
 	// Deserialize CacheItem
 	var cacheItem *CacheItem
-	cacheItem, err = decodeCacheItem([]byte(result))
+	cacheItem, err = r.codec.Decode([]byte(result))
 	if err != nil {
 		return nil, false
 	}
@@ -290,7 +311,7 @@ func main() {
 	var cache Cache
 
 	if config.CacheType == "redis" {
-		cache = NewRedisCache(config.RedisURL)
+		cache = NewRedisCache(config.RedisURL, &BinaryCodec{})
 	} else {
 		cache = NewSimpleCache()
 	}
