@@ -677,3 +677,45 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestNewRedisCache_ValidURL verifies that NewRedisCache accurately parses the REDIS_URL
+// and configures the go-redis v8 client properly according to the documented format.
+func TestNewRedisCache_ValidURL(t *testing.T) {
+	redisURL := "redis://myuser:mypassword@myhost:1234/5"
+	cache := NewRedisCache(redisURL, &BinaryCodec{})
+
+	opts := cache.client.Options()
+	if opts.Addr != "myhost:1234" {
+		t.Errorf("expected Addr %q, got %q", "myhost:1234", opts.Addr)
+	}
+	if opts.Username != "myuser" {
+		t.Errorf("expected Username %q, got %q", "myuser", opts.Username)
+	}
+	if opts.Password != "mypassword" {
+		t.Errorf("expected Password %q, got %q", "mypassword", opts.Password)
+	}
+	if opts.DB != 5 {
+		t.Errorf("expected DB %d, got %d", 5, opts.DB)
+	}
+}
+
+// TestNewRedisCache_DefaultURL verifies that NewRedisCache accurately parses the default
+// REDIS_URL documented in the README.
+func TestNewRedisCache_DefaultURL(t *testing.T) {
+	redisURL := "redis://localhost:6379/0"
+	cache := NewRedisCache(redisURL, &BinaryCodec{})
+
+	opts := cache.client.Options()
+	if opts.Addr != "localhost:6379" {
+		t.Errorf("expected Addr %q, got %q", "localhost:6379", opts.Addr)
+	}
+	if opts.Username != "" {
+		t.Errorf("expected empty Username, got %q", opts.Username)
+	}
+	if opts.Password != "" {
+		t.Errorf("expected empty Password, got %q", opts.Password)
+	}
+	if opts.DB != 0 {
+		t.Errorf("expected DB %d, got %d", 0, opts.DB)
+	}
+}
