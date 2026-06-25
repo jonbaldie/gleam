@@ -1,21 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"jonbaldie/gleam/cache"
 	"jonbaldie/gleam/codec"
+	"jonbaldie/gleam/proxy"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,36 +18,6 @@ import (
 )
 
 var ctx = context.Background()
-
-func newCachingProxyHandler(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(origin)
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			cacheKey := cacheKeyForRequest(r)
-			if cachedItem, found := c.Get(cacheKey); found {
-				for key, values := range cachedItem.Header {
-					for _, value := range values {
-						w.Header().Add(key, value)
-					}
-				}
-				w.WriteHeader(cachedItem.Status)
-				_, _ = w.Write(cachedItem.Content)
-				return
-			}
-
-			crw := &CacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
-			proxy.ServeHTTP(crw, r)
-
-			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
-				c.Set(cacheKey, cache.CacheItem{Content: crw.buf.Bytes(), Header: crw.Header(), Status: crw.status}, ttl)
-			}
-			return
-		}
-
-		proxy.ServeHTTP(w, r)
-	})
-}
 
 // SimpleCache holds the cache data
 type SimpleCache struct {
@@ -144,26 +109,6 @@ func (r *RedisCache) Get(key string) (*cache.CacheItem, bool) {
 	return cacheItem, true
 }
 
-type CacheResponseWriter struct {
-	http.ResponseWriter
-	buf    *bytes.Buffer
-	status int
-}
-
-func (w *CacheResponseWriter) WriteHeader(status int) {
-	w.status = status
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *CacheResponseWriter) Write(b []byte) (int, error) {
-	w.buf.Write(b)
-	return w.ResponseWriter.Write(b)
-}
-
-func (w *CacheResponseWriter) Header() http.Header {
-	return w.ResponseWriter.Header()
-}
-
 // Config holds all configurable options
 type Config struct {
 	OriginURL string
@@ -236,40 +181,6 @@ func getenv(key, fallback string) string {
 	return value
 }
 
-// Include request headers in the cache key so one caller's GET response is not
-// served to another caller with different request metadata.
-func cacheKeyForRequest(r *http.Request) string {
-	base := r.Host + "#" + r.URL.String()
-	if len(r.Header) == 0 {
-		return base
-	}
-
-	headerNames := make([]string, 0, len(r.Header))
-	for name := range r.Header {
-		headerNames = append(headerNames, name)
-	}
-	sort.Strings(headerNames)
-
-	var signature strings.Builder
-	for _, name := range headerNames {
-		values := append([]string(nil), r.Header.Values(name)...)
-		sort.Strings(values)
-		safeName := strings.ReplaceAll(name, "\n", "\\n")
-		signature.WriteString(safeName)
-		signature.WriteByte(':')
-		escapedValues := make([]string, len(values))
-		for i, val := range values {
-			escaped := strings.ReplaceAll(val, "\n", "\\n")
-			escapedValues[i] = strings.ReplaceAll(escaped, "\x00", "\\0")
-		}
-		signature.WriteString(strings.Join(escapedValues, "\x00"))
-		signature.WriteByte('\n')
-	}
-
-	sum := sha256.Sum256([]byte(signature.String()))
-	return base + "#h=" + hex.EncodeToString(sum[:])
-}
-
 func main() {
 	config := loadConfig()
 
@@ -282,7 +193,7 @@ func main() {
 	} else {
 		c = NewSimpleCache()
 	}
-	handler := newCachingProxyHandler(config.Origin, c, config.TTL)
+	handler := proxy.New(config.Origin, c, config.TTL)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s", r.Method, r.URL.Path)
