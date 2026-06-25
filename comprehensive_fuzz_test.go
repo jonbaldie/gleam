@@ -36,14 +36,16 @@ func FuzzDecodeCacheItemWithMutations(f *testing.F) {
 		},
 	}
 
+	codec := &BinaryCodec{}
 	for _, tc := range testCases {
-		if enc, err := encodeCacheItem(tc); err == nil {
+		if enc, err := codec.Encode(tc); err == nil {
 			f.Add(enc)
 		}
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		item, err := decodeCacheItem(data)
+		codec := &BinaryCodec{}
+		item, err := codec.Decode(data)
 		if err != nil {
 			// Decoding errors are acceptable for malformed input
 			return
@@ -79,12 +81,13 @@ func FuzzHeaderRoundTrip(f *testing.F) {
 			expiration: time.Now().Truncate(time.Second),
 		}
 
-		enc, err := encodeCacheItem(item)
+		codec := &BinaryCodec{}
+		enc, err := codec.Encode(item)
 		if err != nil {
 			return
 		}
 
-		decoded, err := decodeCacheItem(enc)
+		decoded, err := codec.Decode(enc)
 		if err != nil {
 			t.Fatalf("failed to decode valid item: %v", err)
 		}
@@ -129,11 +132,12 @@ func FuzzStatusCodesExhaustive(f *testing.F) {
 				status:     int(s),
 				expiration: time.Now(),
 			}
-			enc, err := encodeCacheItem(item)
+			codec := &BinaryCodec{}
+			enc, err := codec.Encode(item)
 			if err != nil {
 				return
 			}
-			dec, err := decodeCacheItem(enc)
+			dec, err := codec.Decode(enc)
 			if err != nil {
 				t.Fatalf("failed to decode status %d", s)
 			}
@@ -163,12 +167,13 @@ func FuzzLargeContent(f *testing.F) {
 			expiration: time.Now(),
 		}
 
-		enc, err := encodeCacheItem(item)
+		codec := &BinaryCodec{}
+		enc, err := codec.Encode(item)
 		if err != nil {
 			return
 		}
 
-		dec, err := decodeCacheItem(enc)
+		dec, err := codec.Decode(enc)
 		if err != nil {
 			t.Fatalf("failed to decode large content: %v", err)
 		}
