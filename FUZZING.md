@@ -47,10 +47,14 @@ func FuzzDecodeCacheItem(f *testing.F) {
 	f.Add([]byte("AAAAAMgAAAD/////"))
 	f.Add([]byte("AAAAAMgAAAABAAAAAAAAAP////8="))
 	hdr := http.Header{"Content-Type": {"text/plain"}}
-	if enc, err := encodeCacheItem(CacheItem{content: []byte("hi"), header: hdr, status: 200, expiration: time.Unix(0, 0)}); err == nil {
+	codec := &BinaryCodec{}
+	if enc, err := codec.Encode(CacheItem{content: []byte("hi"), header: hdr, status: 200, expiration: time.Unix(0, 0)}); err == nil {
 		f.Add(enc)
 	}
-	f.Fuzz(func(t *testing.T, data []byte) { _, _ = decodeCacheItem(data) })
+	f.Fuzz(func(t *testing.T, data []byte) { 
+		codec := &BinaryCodec{}
+		_, _ = codec.Decode(data) 
+	})
 }
 
 func FuzzEncodeDecodeRoundTrip(f *testing.F) {
@@ -65,11 +69,12 @@ func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 			hdr.Add(hkey, hval)
 		}
 		in := CacheItem{content: []byte(body), header: hdr, status: status, expiration: time.Now().Truncate(0)}
-		enc, err := encodeCacheItem(in)
+		codec := &BinaryCodec{}
+		enc, err := codec.Encode(in)
 		if err != nil {
 			return
 		}
-		out, err := decodeCacheItem(enc)
+		out, err := codec.Decode(enc)
 		if err != nil {
 			t.Fatalf("decode of freshly encoded item failed: %v", err)
 		}
