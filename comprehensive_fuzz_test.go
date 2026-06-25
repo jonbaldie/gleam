@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"jonbaldie/gleam/cache"
 	"net/http"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 // FuzzDecodeCacheItemWithMutations tests decoding of systematically mutated valid inputs
 func FuzzDecodeCacheItemWithMutations(f *testing.F) {
 	// Create some valid cache items and add their encodings
-	testCases := []CacheItem{
+	testCases := []cache.CacheItem{
 		{
 			Content:    []byte(""),
 			Header:     http.Header{},
@@ -74,7 +75,7 @@ func FuzzHeaderRoundTrip(f *testing.F) {
 			original.Add(hkey, hval)
 		}
 
-		item := CacheItem{
+		item := cache.CacheItem{
 			Content:    []byte(content),
 			Header:     original,
 			Status:     int(status),
@@ -126,7 +127,7 @@ func FuzzStatusCodesExhaustive(f *testing.F) {
 			if s < 0 || s > 999 {
 				return
 			}
-			item := CacheItem{
+			item := cache.CacheItem{
 				Content:    content,
 				Header:     http.Header{},
 				Status:     int(s),
@@ -160,7 +161,7 @@ func FuzzLargeContent(f *testing.F) {
 			return
 		}
 
-		item := CacheItem{
+		item := cache.CacheItem{
 			Content:    content,
 			Header:     http.Header{"Content-Length": {string(rune(len(content)))}},
 			Status:     200,

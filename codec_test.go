@@ -1,6 +1,7 @@
 package main
 
 import (
+	"jonbaldie/gleam/cache"
 	"net/http"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ func TestBinaryCodec_ImplementsCodec(t *testing.T) {
 
 func TestBinaryCodec_RoundTrip(t *testing.T) {
 	codec := &BinaryCodec{}
-	item := CacheItem{
+	item := cache.CacheItem{
 		Content:    []byte("test"),
 		Header:     http.Header{"X-Test": {"1"}},
 		Status:     200,

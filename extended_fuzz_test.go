@@ -68,7 +68,7 @@ func FuzzCacheKeyCollisionSearch(f *testing.F) {
 			k1 := cacheKeyForRequest(r1)
 			k2 := cacheKeyForRequest(r2)
 			if k1 == k2 {
-				t.Fatalf("Cache key collision found!\nReq1 Header: %v\nReq2 Header: %v\nBoth keys: %s", r1.Header, r2.Header, k1)
+				t.Fatalf("cache.Cache key collision found!\nReq1 Header: %v\nReq2 Header: %v\nBoth keys: %s", r1.Header, r2.Header, k1)
 			}
 		}
 	})

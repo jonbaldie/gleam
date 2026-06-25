@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"jonbaldie/gleam/cache"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,11 +16,11 @@ import (
 )
 
 func TestSimpleCache(t *testing.T) {
-	cache := NewSimpleCache()
+	c := NewSimpleCache()
 
 	// Test Set and Get
-	cache.Set("key1", CacheItem{Content: []byte("value1"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Minute)
-	item, found := cache.Get("key1")
+	c.Set("key1", cache.CacheItem{Content: []byte("value1"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Minute)
+	item, found := c.Get("key1")
 	if !found {
 		t.Error("Expected to find key1 in cache")
 	}
@@ -28,9 +29,9 @@ func TestSimpleCache(t *testing.T) {
 	}
 
 	// Test expiration
-	cache.Set("key2", CacheItem{Content: []byte("value2"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Nanosecond)
+	c.Set("key2", cache.CacheItem{Content: []byte("value2"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Nanosecond)
 	time.Sleep(1 * time.Millisecond)
-	_, found = cache.Get("key2")
+	_, found = c.Get("key2")
 	if found {
 		t.Error("Expected key2 to be expired")
 	}
@@ -200,8 +201,8 @@ func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	cache := NewSimpleCache()
-	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	c := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -221,7 +222,7 @@ func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
 	if got := originCalls.Load(); got != 1 {
 		t.Fatalf("expected one origin call after cache hit, got %d", got)
 	}
-	if item, found := cache.Get(cacheKeyForRequest(req)); !found {
+	if item, found := c.Get(cacheKeyForRequest(req)); !found {
 		t.Fatal("expected successful response to be cached")
 	} else if item.Status != http.StatusCreated {
 		t.Fatalf("expected cached item status %d, got %d", http.StatusCreated, item.Status)
@@ -242,8 +243,8 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	cache := NewSimpleCache()
-	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	c := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/flaky", nil)
@@ -251,7 +252,7 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	if first.Code != http.StatusBadGateway {
 		t.Fatalf("expected first response status %d, got %d", http.StatusBadGateway, first.Code)
 	}
-	if _, found := cache.Get(cacheKeyForRequest(req)); found {
+	if _, found := c.Get(cacheKeyForRequest(req)); found {
 		t.Fatal("expected transient failure response to not be cached")
 	}
 
@@ -266,7 +267,7 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	if got := originCalls.Load(); got != 2 {
 		t.Fatalf("expected second request to reach origin after failure, got %d calls", got)
 	}
-	if item, found := cache.Get(cacheKeyForRequest(req)); !found {
+	if item, found := c.Get(cacheKeyForRequest(req)); !found {
 		t.Fatal("expected recovered response to be cached")
 	} else if item.Status != http.StatusOK {
 		t.Fatalf("expected cached recovery status %d, got %d", http.StatusOK, item.Status)
@@ -282,8 +283,8 @@ func TestProxySeparatesCachedGetsByAuthorizationHeader(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	cache := NewSimpleCache()
-	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	c := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
 
 	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
 	firstRequest.Header.Set("Authorization", "Bearer alpha")
@@ -302,7 +303,7 @@ func TestProxySeparatesCachedGetsByAuthorizationHeader(t *testing.T) {
 	}
 
 	if got := originCalls.Load(); got != 2 {
-		t.Fatalf("expected distinct authorization headers to bypass shared cache, got %d origin calls", got)
+		t.Fatalf("expected distinct authorization headers to bypass shared c, got %d origin calls", got)
 	}
 }
 
@@ -315,8 +316,8 @@ func TestProxyCachesEquivalentGetsWithSameAuthorizationHeader(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	cache := NewSimpleCache()
-	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	c := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
 
 	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
 	firstRequest.Header.Set("Authorization", "Bearer alpha")
@@ -336,7 +337,7 @@ func TestProxyCachesEquivalentGetsWithSameAuthorizationHeader(t *testing.T) {
 	}
 }
 
-func mustCachingProxyHandler(t *testing.T, originURL string, cache Cache, ttl time.Duration) http.Handler {
+func mustCachingProxyHandler(t *testing.T, originURL string, c cache.Cache, ttl time.Duration) http.Handler {
 	t.Helper()
 
 	origin, err := parseOriginURL(originURL)
@@ -344,20 +345,20 @@ func mustCachingProxyHandler(t *testing.T, originURL string, cache Cache, ttl ti
 		t.Fatalf("parse origin URL: %v", err)
 	}
 
-	return newCachingProxyHandler(origin, cache, ttl)
+	return newCachingProxyHandler(origin, c, ttl)
 }
 
 // TestSimpleCacheStoresAndReturnsHeaders kills gleam.go:82 (composite/field-clear drops
-// the header field from the stored CacheItem, causing cached responses to carry no headers).
+// the header field from the stored cache.CacheItem, causing cached responses to carry no headers).
 func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
-	cache := NewSimpleCache()
+	c := NewSimpleCache()
 	header := http.Header{
 		"Content-Type": {"application/json"},
 		"X-Request-Id": {"abc-123"},
 	}
-	cache.Set("k", CacheItem{Content: []byte("body"), Header: header, Status: http.StatusOK}, time.Minute)
+	c.Set("k", cache.CacheItem{Content: []byte("body"), Header: header, Status: http.StatusOK}, time.Minute)
 
-	item, found := cache.Get("k")
+	item, found := c.Get("k")
 	if !found {
 		t.Fatal("expected to find cached item")
 	}
@@ -411,8 +412,8 @@ func TestProxyDoesNotCacheStatus300(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	cache := NewSimpleCache()
-	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	c := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/page", nil)
@@ -420,7 +421,7 @@ func TestProxyDoesNotCacheStatus300(t *testing.T) {
 	if rec.Code != http.StatusMultipleChoices {
 		t.Fatalf("expected upstream status %d forwarded, got %d", http.StatusMultipleChoices, rec.Code)
 	}
-	if _, found := cache.Get(cacheKeyForRequest(req)); found {
+	if _, found := c.Get(cacheKeyForRequest(req)); found {
 		t.Error("expected status-300 response to not be cached")
 	}
 }
@@ -440,8 +441,8 @@ func TestProxyCopiesAllResponseHeadersOnCacheHit(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	cache := NewSimpleCache()
-	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	c := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api", nil))
@@ -450,10 +451,10 @@ func TestProxyCopiesAllResponseHeadersOnCacheHit(t *testing.T) {
 	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api", nil))
 
 	if got := second.Header().Get("Content-Type"); got != "application/json" {
-		t.Errorf("expected Content-Type %q from cache, got %q", "application/json", got)
+		t.Errorf("expected Content-Type %q from c, got %q", "application/json", got)
 	}
 	if got := second.Header().Get("X-Custom-Header"); got != "sentinel-value" {
-		t.Errorf("expected X-Custom-Header %q from cache, got %q", "sentinel-value", got)
+		t.Errorf("expected X-Custom-Header %q from c, got %q", "sentinel-value", got)
 	}
 	if body := second.Body.String(); body != `{"ok":true}` {
 		t.Errorf("expected cached body %q, got %q", `{"ok":true}`, body)
@@ -606,8 +607,8 @@ func TestCacheResponseWriterSubOKStatusIsNotCacheable(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	cache := NewSimpleCache()
-	handler := mustCachingProxyHandler(t, origin.URL, cache, time.Minute)
+	c := NewSimpleCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/informational", nil)
@@ -615,7 +616,7 @@ func TestCacheResponseWriterSubOKStatusIsNotCacheable(t *testing.T) {
 	if rec.Code != 199 {
 		t.Fatalf("expected upstream status 199 forwarded, got %d", rec.Code)
 	}
-	if _, found := cache.Get(cacheKeyForRequest(req)); found {
+	if _, found := c.Get(cacheKeyForRequest(req)); found {
 		t.Error("expected status-199 response to not be cached")
 	}
 }
@@ -661,7 +662,7 @@ func TestCacheKeyForRequestDoesNotCollideOnCommaInValue(t *testing.T) {
 // converts "defer c.mu.Unlock()" to an immediate unlock, releasing the mutex before
 // the map write and causing a concurrent-map-write panic under contention).
 func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
-	cache := NewSimpleCache()
+	c := NewSimpleCache()
 	var wg sync.WaitGroup
 	const N = 200
 	wg.Add(N)
@@ -672,7 +673,7 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 			// to the same map bucket, reliably triggering Go's built-in
 			// concurrent-map-write detector if the mutex is not held.
 			key := fmt.Sprintf("key-%d", n%5)
-			cache.Set(key, CacheItem{Content: []byte(fmt.Sprintf("v%d", n)), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
+			c.Set(key, cache.CacheItem{Content: []byte(fmt.Sprintf("v%d", n)), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 		}(i)
 	}
 	wg.Wait()
@@ -682,9 +683,9 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 // and configures the go-redis v8 client properly according to the documented format.
 func TestNewRedisCache_ValidURL(t *testing.T) {
 	redisURL := "redis://myuser:mypassword@myhost:1234/5"
-	cache := NewRedisCache(redisURL, &BinaryCodec{})
+	c := NewRedisCache(redisURL, &BinaryCodec{})
 
-	opts := cache.client.Options()
+	opts := c.client.Options()
 	if opts.Addr != "myhost:1234" {
 		t.Errorf("expected Addr %q, got %q", "myhost:1234", opts.Addr)
 	}
@@ -703,9 +704,9 @@ func TestNewRedisCache_ValidURL(t *testing.T) {
 // REDIS_URL documented in the README.
 func TestNewRedisCache_DefaultURL(t *testing.T) {
 	redisURL := "redis://localhost:6379/0"
-	cache := NewRedisCache(redisURL, &BinaryCodec{})
+	c := NewRedisCache(redisURL, &BinaryCodec{})
 
-	opts := cache.client.Options()
+	opts := c.client.Options()
 	if opts.Addr != "localhost:6379" {
 		t.Errorf("expected Addr %q, got %q", "localhost:6379", opts.Addr)
 	}

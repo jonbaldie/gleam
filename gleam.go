@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/go-redis/redis/v8"
 	"io"
+	"jonbaldie/gleam/cache"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -25,13 +27,13 @@ import (
 
 var ctx = context.Background()
 
-func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) http.Handler {
+func newCachingProxyHandler(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(origin)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			cacheKey := cacheKeyForRequest(r)
-			if cachedItem, found := cache.Get(cacheKey); found {
+			if cachedItem, found := c.Get(cacheKey); found {
 				for key, values := range cachedItem.Header {
 					for _, value := range values {
 						w.Header().Add(key, value)
@@ -46,7 +48,7 @@ func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) htt
 			proxy.ServeHTTP(crw, r)
 
 			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
-				cache.Set(cacheKey, CacheItem{Content: crw.buf.Bytes(), Header: crw.Header(), Status: crw.status}, ttl)
+				c.Set(cacheKey, cache.CacheItem{Content: crw.buf.Bytes(), Header: crw.Header(), Status: crw.status}, ttl)
 			}
 			return
 		}
@@ -55,31 +57,18 @@ func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) htt
 	})
 }
 
-type Cache interface {
-	Set(key string, item CacheItem, ttl time.Duration)
-	Get(key string) (*CacheItem, bool)
-}
-
 // SimpleCache holds the cache data
 type SimpleCache struct {
 	mu    sync.Mutex
-	store map[string]*CacheItem
-}
-
-// CacheItem represents a single cache entry
-type CacheItem struct {
-	Content    []byte
-	Header     http.Header
-	Status     int
-	Expiration time.Time
+	store map[string]*cache.CacheItem
 }
 
 // Set stores data in the cache
-func (c *SimpleCache) Set(key string, item CacheItem, ttl time.Duration) {
+func (c *SimpleCache) Set(key string, item cache.CacheItem, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.store[key] = &CacheItem{
+	c.store[key] = &cache.CacheItem{
 		Content:    item.Content,
 		Header:     item.Header,
 		Status:     item.Status,
@@ -88,7 +77,7 @@ func (c *SimpleCache) Set(key string, item CacheItem, ttl time.Duration) {
 }
 
 // Get retrieves data from the cache
-func (c *SimpleCache) Get(key string) (*CacheItem, bool) {
+func (c *SimpleCache) Get(key string) (*cache.CacheItem, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -102,26 +91,26 @@ func (c *SimpleCache) Get(key string) (*CacheItem, bool) {
 // NewSimpleCache initializes and returns a new SimpleCache
 func NewSimpleCache() *SimpleCache {
 	return &SimpleCache{
-		store: make(map[string]*CacheItem),
+		store: make(map[string]*cache.CacheItem),
 	}
 }
 
 // Codec defines an interface for serialization of cache items.
 type Codec interface {
-	Encode(item CacheItem) ([]byte, error)
-	Decode(data []byte) (*CacheItem, error)
+	Encode(item cache.CacheItem) ([]byte, error)
+	Decode(data []byte) (*cache.CacheItem, error)
 }
 
 // BinaryCodec implements the Codec interface using a binary format.
 type BinaryCodec struct{}
 
 // Encode serializes a CacheItem to a byte slice.
-func (c *BinaryCodec) Encode(item CacheItem) ([]byte, error) {
+func (c *BinaryCodec) Encode(item cache.CacheItem) ([]byte, error) {
 	return encodeCacheItem(item)
 }
 
 // Decode deserializes a byte slice back into a CacheItem.
-func (c *BinaryCodec) Decode(data []byte) (*CacheItem, error) {
+func (c *BinaryCodec) Decode(data []byte) (*cache.CacheItem, error) {
 	return decodeCacheItem(data)
 }
 
@@ -148,7 +137,7 @@ func NewRedisCache(redisURL string, codec Codec) *RedisCache {
 }
 
 // Set stores data in Redis
-func (r *RedisCache) Set(key string, item CacheItem, ttl time.Duration) {
+func (r *RedisCache) Set(key string, item cache.CacheItem, ttl time.Duration) {
 	itemBytes, err := r.codec.Encode(item)
 	if err != nil {
 		log.Printf("failed to encode cache item for key %q: %v", key, err)
@@ -160,7 +149,7 @@ func (r *RedisCache) Set(key string, item CacheItem, ttl time.Duration) {
 }
 
 // Get retrieves data from Redis
-func (r *RedisCache) Get(key string) (*CacheItem, bool) {
+func (r *RedisCache) Get(key string) (*cache.CacheItem, bool) {
 	// Fetch from Redis
 	result, err := r.client.Get(ctx, key).Result()
 	if err == redis.Nil || err != nil {
@@ -168,7 +157,7 @@ func (r *RedisCache) Get(key string) (*CacheItem, bool) {
 	}
 
 	// Deserialize CacheItem
-	var cacheItem *CacheItem
+	var cacheItem *cache.CacheItem
 	cacheItem, err = r.codec.Decode([]byte(result))
 	if err != nil {
 		return nil, false
@@ -308,14 +297,14 @@ func main() {
 
 	log.Printf("Gleam started with Origin: %s, TTL: %v, Port: %s", config.OriginURL, config.TTL, config.Port)
 
-	var cache Cache
+	var c cache.Cache
 
 	if config.CacheType == "redis" {
-		cache = NewRedisCache(config.RedisURL, &BinaryCodec{})
+		c = NewRedisCache(config.RedisURL, &BinaryCodec{})
 	} else {
-		cache = NewSimpleCache()
+		c = NewSimpleCache()
 	}
-	handler := newCachingProxyHandler(config.Origin, cache, config.TTL)
+	handler := newCachingProxyHandler(config.Origin, c, config.TTL)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s", r.Method, r.URL.Path)
@@ -325,7 +314,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+config.Port, nil))
 }
 
-func encodeCacheItem(item CacheItem) ([]byte, error) {
+func encodeCacheItem(item cache.CacheItem) ([]byte, error) {
 	// Initialize a buffer to write the data into
 	var buf bytes.Buffer
 
@@ -426,14 +415,14 @@ func readSized(r *bytes.Reader) ([]byte, error) {
 	return b, nil
 }
 
-func decodeCacheItem(data []byte) (*CacheItem, error) {
+func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	decoded, err := base64.StdEncoding.DecodeString(string(data))
 	if err != nil {
 		return nil, err
 	}
 
 	buf := bytes.NewReader(decoded)
-	item := &CacheItem{}
+	item := &cache.CacheItem{}
 
 	if item.Content, err = readSized(buf); err != nil {
 		return nil, err
