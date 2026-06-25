@@ -46,7 +46,7 @@ func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) htt
 			proxy.ServeHTTP(crw, r)
 
 			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
-				cache.Set(cacheKey, crw.buf.Bytes(), crw.Header(), crw.status, ttl)
+				cache.Set(cacheKey, CacheItem{content: crw.buf.Bytes(), header: crw.Header(), status: crw.status}, ttl)
 			}
 			return
 		}
@@ -56,7 +56,7 @@ func newCachingProxyHandler(origin *url.URL, cache Cache, ttl time.Duration) htt
 }
 
 type Cache interface {
-	Set(key string, content []byte, header http.Header, status int, ttl time.Duration)
+	Set(key string, item CacheItem, ttl time.Duration)
 	Get(key string) (*CacheItem, bool)
 }
 
@@ -75,14 +75,14 @@ type CacheItem struct {
 }
 
 // Set stores data in the cache
-func (c *SimpleCache) Set(key string, content []byte, header http.Header, status int, ttl time.Duration) {
+func (c *SimpleCache) Set(key string, item CacheItem, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.store[key] = &CacheItem{
-		content:    content,
-		header:     header,
-		status:     status,
+		content:    item.content,
+		header:     item.header,
+		status:     item.status,
 		expiration: time.Now().Add(ttl),
 	}
 }
@@ -127,14 +127,8 @@ func NewRedisCache(redisURL string) *RedisCache {
 }
 
 // Set stores data in Redis
-func (r *RedisCache) Set(key string, content []byte, header http.Header, status int, ttl time.Duration) {
-	// Serialize CacheItem
-	cacheItem := CacheItem{
-		content: content,
-		header:  header,
-		status:  status,
-	}
-	itemBytes, err := encodeCacheItem(cacheItem)
+func (r *RedisCache) Set(key string, item CacheItem, ttl time.Duration) {
+	itemBytes, err := encodeCacheItem(item)
 	if err != nil {
 		log.Printf("failed to encode cache item for key %q: %v", key, err)
 		return

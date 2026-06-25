@@ -18,7 +18,7 @@ func TestSimpleCache(t *testing.T) {
 	cache := NewSimpleCache()
 
 	// Test Set and Get
-	cache.Set("key1", []byte("value1"), http.Header{}, http.StatusOK, 1*time.Minute)
+	cache.Set("key1", CacheItem{content: []byte("value1"), header: http.Header{}, status: http.StatusOK}, 1*time.Minute)
 	item, found := cache.Get("key1")
 	if !found {
 		t.Error("Expected to find key1 in cache")
@@ -28,7 +28,7 @@ func TestSimpleCache(t *testing.T) {
 	}
 
 	// Test expiration
-	cache.Set("key2", []byte("value2"), http.Header{}, http.StatusOK, 1*time.Nanosecond)
+	cache.Set("key2", CacheItem{content: []byte("value2"), header: http.Header{}, status: http.StatusOK}, 1*time.Nanosecond)
 	time.Sleep(1 * time.Millisecond)
 	_, found = cache.Get("key2")
 	if found {
@@ -323,7 +323,7 @@ func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
 		"Content-Type": {"application/json"},
 		"X-Request-Id": {"abc-123"},
 	}
-	cache.Set("k", []byte("body"), header, http.StatusOK, time.Minute)
+	cache.Set("k", CacheItem{content: []byte("body"), header: header, status: http.StatusOK}, time.Minute)
 
 	item, found := cache.Get("k")
 	if !found {
@@ -640,7 +640,7 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 			// to the same map bucket, reliably triggering Go's built-in
 			// concurrent-map-write detector if the mutex is not held.
 			key := fmt.Sprintf("key-%d", n%5)
-			cache.Set(key, []byte(fmt.Sprintf("v%d", n)), http.Header{}, http.StatusOK, time.Minute)
+			cache.Set(key, CacheItem{content: []byte(fmt.Sprintf("v%d", n)), header: http.Header{}, status: http.StatusOK}, time.Minute)
 		}(i)
 	}
 	wg.Wait()
