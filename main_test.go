@@ -18,17 +18,17 @@ func TestSimpleCache(t *testing.T) {
 	cache := NewSimpleCache()
 
 	// Test Set and Get
-	cache.Set("key1", CacheItem{content: []byte("value1"), header: http.Header{}, status: http.StatusOK}, 1*time.Minute)
+	cache.Set("key1", CacheItem{Content: []byte("value1"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Minute)
 	item, found := cache.Get("key1")
 	if !found {
 		t.Error("Expected to find key1 in cache")
 	}
-	if string(item.content) != "value1" {
-		t.Errorf("Expected value1, got %s", string(item.content))
+	if string(item.Content) != "value1" {
+		t.Errorf("Expected value1, got %s", string(item.Content))
 	}
 
 	// Test expiration
-	cache.Set("key2", CacheItem{content: []byte("value2"), header: http.Header{}, status: http.StatusOK}, 1*time.Nanosecond)
+	cache.Set("key2", CacheItem{Content: []byte("value2"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Nanosecond)
 	time.Sleep(1 * time.Millisecond)
 	_, found = cache.Get("key2")
 	if found {
@@ -223,8 +223,8 @@ func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
 	}
 	if item, found := cache.Get(cacheKeyForRequest(req)); !found {
 		t.Fatal("expected successful response to be cached")
-	} else if item.status != http.StatusCreated {
-		t.Fatalf("expected cached item status %d, got %d", http.StatusCreated, item.status)
+	} else if item.Status != http.StatusCreated {
+		t.Fatalf("expected cached item status %d, got %d", http.StatusCreated, item.Status)
 	}
 }
 
@@ -268,8 +268,8 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	}
 	if item, found := cache.Get(cacheKeyForRequest(req)); !found {
 		t.Fatal("expected recovered response to be cached")
-	} else if item.status != http.StatusOK {
-		t.Fatalf("expected cached recovery status %d, got %d", http.StatusOK, item.status)
+	} else if item.Status != http.StatusOK {
+		t.Fatalf("expected cached recovery status %d, got %d", http.StatusOK, item.Status)
 	}
 }
 
@@ -355,16 +355,16 @@ func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
 		"Content-Type": {"application/json"},
 		"X-Request-Id": {"abc-123"},
 	}
-	cache.Set("k", CacheItem{content: []byte("body"), header: header, status: http.StatusOK}, time.Minute)
+	cache.Set("k", CacheItem{Content: []byte("body"), Header: header, Status: http.StatusOK}, time.Minute)
 
 	item, found := cache.Get("k")
 	if !found {
 		t.Fatal("expected to find cached item")
 	}
-	if got := item.header.Get("Content-Type"); got != "application/json" {
+	if got := item.Header.Get("Content-Type"); got != "application/json" {
 		t.Errorf("expected cached Content-Type application/json, got %q", got)
 	}
-	if got := item.header.Get("X-Request-Id"); got != "abc-123" {
+	if got := item.Header.Get("X-Request-Id"); got != "abc-123" {
 		t.Errorf("expected cached X-Request-Id abc-123, got %q", got)
 	}
 }
@@ -573,7 +573,7 @@ func TestCacheKeyForRequestDifferentPathsNoHeaders(t *testing.T) {
 }
 
 // TestCacheResponseWriterDefaultsToStatusOK kills gleam.go:44 (composite/field-clear
-// drops status: http.StatusOK from the CacheResponseWriter literal, leaving status at its
+// drops Status: http.StatusOK from the CacheResponseWriter literal, leaving status at its
 // zero value 0). If WriteHeader is never called — which cannot happen with httputil.ReverseProxy
 // but is the contract the type itself must honour — a status of 0 fails the
 // crw.status >= http.StatusOK guard at gleam.go:47, so the response would silently not be
@@ -672,7 +672,7 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 			// to the same map bucket, reliably triggering Go's built-in
 			// concurrent-map-write detector if the mutex is not held.
 			key := fmt.Sprintf("key-%d", n%5)
-			cache.Set(key, CacheItem{content: []byte(fmt.Sprintf("v%d", n)), header: http.Header{}, status: http.StatusOK}, time.Minute)
+			cache.Set(key, CacheItem{Content: []byte(fmt.Sprintf("v%d", n)), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 		}(i)
 	}
 	wg.Wait()
