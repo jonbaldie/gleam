@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="Baseline Ruleset" xmlns="http://pmd.sf.net/ruleset/1.0.0">
+    <description>Baseline ruleset for gleam</description>
+
+    <rule ref="go">
+        <!-- Tests often use underscores for naming, which conflicts with camelCase -->
+        <exclude name="CamelCaseMethodName" />
+        <!-- Exclude assignment in if conditions as it's idiomatic in some Go patterns -->
+        <exclude name="IfStatementAssignment" />
+        
+        <!-- We override these below with custom thresholds -->
+        <exclude name="CyclomaticComplexity" />
+        <exclude name="NPathComplexity" />
+    </rule>
+
+    <!-- Configure CyclomaticComplexity to match the current highest complexity (17) -->
+    <rule ref="codesize/CyclomaticComplexity">
+        <properties>
+            <property name="reportLevel" value="18" />
+        </properties>
+    </rule>
+    
+    <!-- Configure NPathComplexity to match the current highest complexity (15744) -->
+    <rule ref="codesize/NPathComplexity">
+        <properties>
+            <property name="minimum" value="16000" />
+        </properties>
+    </rule>
+</ruleset>
