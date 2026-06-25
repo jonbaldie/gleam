@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"jonbaldie/gleam/cache"
+	"jonbaldie/gleam/codec"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -683,7 +684,7 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 // and configures the go-redis v8 client properly according to the documented format.
 func TestNewRedisCache_ValidURL(t *testing.T) {
 	redisURL := "redis://myuser:mypassword@myhost:1234/5"
-	c := NewRedisCache(redisURL, &BinaryCodec{})
+	c := NewRedisCache(redisURL, &codec.BinaryCodec{})
 
 	opts := c.client.Options()
 	if opts.Addr != "myhost:1234" {
@@ -704,7 +705,7 @@ func TestNewRedisCache_ValidURL(t *testing.T) {
 // REDIS_URL documented in the README.
 func TestNewRedisCache_DefaultURL(t *testing.T) {
 	redisURL := "redis://localhost:6379/0"
-	c := NewRedisCache(redisURL, &BinaryCodec{})
+	c := NewRedisCache(redisURL, &codec.BinaryCodec{})
 
 	opts := c.client.Options()
 	if opts.Addr != "localhost:6379" {
