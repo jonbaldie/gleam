@@ -26,6 +26,16 @@ func TestEncode_InvalidStatus(t *testing.T) {
 	if _, err := codec.Encode(item); err == nil || !strings.Contains(err.Error(), "invalid status code") {
 		t.Errorf("Expected invalid status code error, got %v", err)
 	}
+
+	// Status 100 and 999 are valid
+	item = cache.CacheItem{Status: 100}
+	if _, err := codec.Encode(item); err != nil {
+		t.Errorf("Status 100 should be valid, got %v", err)
+	}
+	item = cache.CacheItem{Status: 999}
+	if _, err := codec.Encode(item); err != nil {
+		t.Errorf("Status 999 should be valid, got %v", err)
+	}
 }
 
 type failingWriter struct {
@@ -43,9 +53,9 @@ func (f *failingWriter) Write(p []byte) (int, error) {
 
 func TestEncodeTo_WriteErrors(t *testing.T) {
 	item := cache.CacheItem{
-		Content: []byte("test"),
-		Header:  http.Header{"X-Test": {"val1", "val2"}},
-		Status:  200,
+		Content:    []byte("test"),
+		Header:     http.Header{"X-Test": {"val1", "val2"}},
+		Status:     200,
 		Expiration: time.Now().Truncate(time.Second),
 	}
 
@@ -90,9 +100,9 @@ func TestDecode_Truncated(t *testing.T) {
 	codec := &BinaryCodec{}
 
 	item := cache.CacheItem{
-		Content: []byte("test"),
-		Header:  http.Header{"X-Test": {"val1"}},
-		Status:  200,
+		Content:    []byte("test"),
+		Header:     http.Header{"X-Test": {"val1"}},
+		Status:     200,
 		Expiration: time.Now(),
 	}
 	encoded, _ := codec.Encode(item)
@@ -109,7 +119,20 @@ func TestDecode_Truncated(t *testing.T) {
 
 func TestReadCount_Exceeds(t *testing.T) {
 	reader := bytes.NewReader([]byte{0xff, 0xff, 0xff, 0xff, 0x00})
-	if _, err := readCount(reader); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	n, err := readCount(reader)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("Expected exceeds error, got %v", err)
+	}
+	if n != 0 {
+		t.Errorf("Expected n=0 on error, got %v", n)
+	}
+
+	reader = bytes.NewReader([]byte{})
+	n, err = readCount(reader)
+	if err == nil {
+		t.Errorf("Expected EOF error")
+	}
+	if n != 0 {
+		t.Errorf("Expected n=0 on error, got %v", n)
 	}
 }

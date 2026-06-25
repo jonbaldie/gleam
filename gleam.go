@@ -92,8 +92,6 @@ func NewSimpleCache() *SimpleCache {
 	}
 }
 
-
-
 // RedisCache implements the Cache interface using Redis
 type RedisCache struct {
 	client *redis.Client
@@ -293,4 +291,3 @@ func main() {
 
 	log.Fatal(http.ListenAndServe(":"+config.Port, nil))
 }
-
