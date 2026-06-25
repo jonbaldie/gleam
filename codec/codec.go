@@ -31,54 +31,60 @@ func (c *BinaryCodec) Decode(data []byte) (*cache.CacheItem, error) {
 }
 
 func encodeCacheItem(item cache.CacheItem) ([]byte, error) {
-	// Initialize a buffer to write the data into
 	var buf bytes.Buffer
-
-	// Write content length and content
-	contentLen := uint32(len(item.Content))
-	if err := binary.Write(&buf, binary.LittleEndian, contentLen); err != nil {
+	if err := encodeTo(&buf, item); err != nil {
 		return nil, err
 	}
-	if _, err := buf.Write(item.Content); err != nil {
-		return nil, err
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+	return []byte(encoded), nil
+}
+
+func encodeTo(w io.Writer, item cache.CacheItem) error {
+	// Write content length and content
+	contentLen := uint32(len(item.Content))
+	if err := binary.Write(w, binary.LittleEndian, contentLen); err != nil {
+		return err
+	}
+	if _, err := w.Write(item.Content); err != nil {
+		return err
 	}
 
 	status := uint32(item.Status)
 	if status < 100 || status > 999 {
-		return nil, fmt.Errorf("cache item: invalid status code %d", status)
+		return fmt.Errorf("cache item: invalid status code %d", status)
 	}
-	if err := binary.Write(&buf, binary.LittleEndian, status); err != nil {
-		return nil, err
+	if err := binary.Write(w, binary.LittleEndian, status); err != nil {
+		return err
 	}
 
 	// Write the headers
 	headerLen := uint32(len(item.Header))
-	if err := binary.Write(&buf, binary.LittleEndian, headerLen); err != nil {
-		return nil, err
+	if err := binary.Write(w, binary.LittleEndian, headerLen); err != nil {
+		return err
 	}
 	for key, values := range item.Header {
 		// Write the header key
 		keyLen := uint32(len(key))
-		if err := binary.Write(&buf, binary.LittleEndian, keyLen); err != nil {
-			return nil, err
+		if err := binary.Write(w, binary.LittleEndian, keyLen); err != nil {
+			return err
 		}
-		if _, err := buf.Write([]byte(key)); err != nil {
-			return nil, err
+		if _, err := w.Write([]byte(key)); err != nil {
+			return err
 		}
 
 		// Write the number of values for this header key
 		valuesLen := uint32(len(values))
-		if err := binary.Write(&buf, binary.LittleEndian, valuesLen); err != nil {
-			return nil, err
+		if err := binary.Write(w, binary.LittleEndian, valuesLen); err != nil {
+			return err
 		}
 		for _, value := range values {
 			// Write the value
 			valueLen := uint32(len(value))
-			if err := binary.Write(&buf, binary.LittleEndian, valueLen); err != nil {
-				return nil, err
+			if err := binary.Write(w, binary.LittleEndian, valueLen); err != nil {
+				return err
 			}
-			if _, err := buf.Write([]byte(value)); err != nil {
-				return nil, err
+			if _, err := w.Write([]byte(value)); err != nil {
+				return err
 			}
 		}
 	}
@@ -86,19 +92,16 @@ func encodeCacheItem(item cache.CacheItem) ([]byte, error) {
 	// Write expiration time
 	expirationBytes, err := item.Expiration.MarshalBinary()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	expirationLen := uint32(len(expirationBytes))
-	if err := binary.Write(&buf, binary.LittleEndian, expirationLen); err != nil {
-		return nil, err
+	if err := binary.Write(w, binary.LittleEndian, expirationLen); err != nil {
+		return err
 	}
-	if _, err := buf.Write(expirationBytes); err != nil {
-		return nil, err
+	if _, err := w.Write(expirationBytes); err != nil {
+		return err
 	}
-
-	// Base64 encode the resulting byte slice
-	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
-	return []byte(encoded), nil
+	return nil
 }
 
 // readCount reads a uint32 length/count prefix and rejects any value that
