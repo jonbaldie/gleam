@@ -88,14 +88,21 @@ func encodeExpiration(w io.Writer, expiration time.Time) error {
 	return writeSized(w, expirationBytes)
 }
 
+func validateStatus(status uint32) error {
+	if status < 100 || status > 999 {
+		return fmt.Errorf("cache item: invalid status code %d", status)
+	}
+	return nil
+}
+
 func encodeTo(w io.Writer, item cache.CacheItem) error {
 	if err := writeSized(w, item.Content); err != nil {
 		return err
 	}
 
 	status := uint32(item.Status)
-	if status < 100 || status > 999 {
-		return fmt.Errorf("cache item: invalid status code %d", status)
+	if err := validateStatus(status); err != nil {
+		return err
 	}
 	if err := writeU32(w, status); err != nil {
 		return err
@@ -139,8 +146,8 @@ func decodeStatus(r *bytes.Reader) (int, error) {
 	if err := binary.Read(r, binary.LittleEndian, &status); err != nil {
 		return 0, err
 	}
-	if status < 100 || status > 999 {
-		return 0, fmt.Errorf("cache item: invalid status code %d", status)
+	if err := validateStatus(status); err != nil {
+		return 0, err
 	}
 	return int(status), nil
 }
