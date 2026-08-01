@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"jonbaldie/gleam/cache"
 )
@@ -39,69 +40,77 @@ func encodeCacheItem(item cache.CacheItem) ([]byte, error) {
 	return []byte(encoded), nil
 }
 
-func encodeTo(w io.Writer, item cache.CacheItem) error {
-	// Write content length and content
-	contentLen := uint32(len(item.Content))
-	if err := binary.Write(w, binary.LittleEndian, contentLen); err != nil {
+func writeU32(w io.Writer, n uint32) error {
+	return binary.Write(w, binary.LittleEndian, n)
+}
+
+// writeSized writes a uint32 length prefix followed by b.
+func writeSized(w io.Writer, b []byte) error {
+	if err := writeU32(w, uint32(len(b))); err != nil {
 		return err
 	}
-	if _, err := w.Write(item.Content); err != nil {
+	_, err := w.Write(b)
+	return err
+}
+
+func writeHeaderEntry(w io.Writer, key string, values []string) error {
+	if err := writeSized(w, []byte(key)); err != nil {
+		return err
+	}
+	if err := writeU32(w, uint32(len(values))); err != nil {
+		return err
+	}
+	for _, value := range values {
+		if err := writeSized(w, []byte(value)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func encodeHeaders(w io.Writer, header http.Header) error {
+	if err := writeU32(w, uint32(len(header))); err != nil {
+		return err
+	}
+	for key, values := range header {
+		if err := writeHeaderEntry(w, key, values); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func encodeExpiration(w io.Writer, expiration time.Time) error {
+	expirationBytes, err := expiration.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	return writeSized(w, expirationBytes)
+}
+
+func validateStatus(status uint32) error {
+	if status < 100 || status > 999 {
+		return fmt.Errorf("cache item: invalid status code %d", status)
+	}
+	return nil
+}
+
+func encodeTo(w io.Writer, item cache.CacheItem) error {
+	if err := writeSized(w, item.Content); err != nil {
 		return err
 	}
 
 	status := uint32(item.Status)
-	if status < 100 || status > 999 {
-		return fmt.Errorf("cache item: invalid status code %d", status)
-	}
-	if err := binary.Write(w, binary.LittleEndian, status); err != nil {
+	if err := validateStatus(status); err != nil {
 		return err
 	}
-
-	// Write the headers
-	headerLen := uint32(len(item.Header))
-	if err := binary.Write(w, binary.LittleEndian, headerLen); err != nil {
+	if err := writeU32(w, status); err != nil {
 		return err
 	}
-	for key, values := range item.Header {
-		// Write the header key
-		keyLen := uint32(len(key))
-		if err := binary.Write(w, binary.LittleEndian, keyLen); err != nil {
-			return err
-		}
-		if _, err := w.Write([]byte(key)); err != nil {
-			return err
-		}
-
-		// Write the number of values for this header key
-		valuesLen := uint32(len(values))
-		if err := binary.Write(w, binary.LittleEndian, valuesLen); err != nil {
-			return err
-		}
-		for _, value := range values {
-			// Write the value
-			valueLen := uint32(len(value))
-			if err := binary.Write(w, binary.LittleEndian, valueLen); err != nil {
-				return err
-			}
-			if _, err := w.Write([]byte(value)); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Write expiration time
-	expirationBytes, err := item.Expiration.MarshalBinary()
-	if err != nil {
+	if err := encodeHeaders(w, item.Header); err != nil {
 		return err
 	}
-	expirationLen := uint32(len(expirationBytes))
-	if err := binary.Write(w, binary.LittleEndian, expirationLen); err != nil {
-		return err
-	}
-	if _, err := w.Write(expirationBytes); err != nil {
-		return err
-	}
-	return nil
+	return encodeExpiration(w, item.Expiration)
 }
 
 // readCount reads a uint32 length/count prefix and rejects any value that
@@ -120,8 +129,6 @@ func readCount(r *bytes.Reader) (uint32, error) {
 }
 
 // readSized reads a uint32 length prefix then exactly that many bytes from r.
-// It collapses the repeated binary.Read/buf.Read pairs in decodeCacheItem,
-// keeping cyclomatic complexity under the gocyclo threshold of 15.
 func readSized(r *bytes.Reader) ([]byte, error) {
 	n, err := readCount(r)
 	if err != nil {
@@ -132,6 +139,65 @@ func readSized(r *bytes.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+func decodeStatus(r *bytes.Reader) (int, error) {
+	var status uint32
+	if err := binary.Read(r, binary.LittleEndian, &status); err != nil {
+		return 0, err
+	}
+	if err := validateStatus(status); err != nil {
+		return 0, err
+	}
+	return int(status), nil
+}
+
+func decodeHeaderValues(r *bytes.Reader) ([]string, error) {
+	valuesLen, err := readCount(r)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]string, valuesLen)
+	for j := uint32(0); j < valuesLen; j++ {
+		value, err := readSized(r)
+		if err != nil {
+			return nil, err
+		}
+		values[j] = string(value)
+	}
+	return values, nil
+}
+
+func decodeHeaders(r *bytes.Reader) (http.Header, error) {
+	headerLen, err := readCount(r)
+	if err != nil {
+		return nil, err
+	}
+	header := make(http.Header, headerLen)
+	for i := uint32(0); i < headerLen; i++ {
+		key, err := readSized(r)
+		if err != nil {
+			return nil, err
+		}
+		values, err := decodeHeaderValues(r)
+		if err != nil {
+			return nil, err
+		}
+		header[string(key)] = values
+	}
+	return header, nil
+}
+
+func decodeExpiration(r *bytes.Reader) (time.Time, error) {
+	expirationBytes, err := readSized(r)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var expiration time.Time
+	if err := expiration.UnmarshalBinary(expirationBytes); err != nil {
+		return time.Time{}, err
+	}
+	return expiration, nil
 }
 
 func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
@@ -146,48 +212,13 @@ func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	if item.Content, err = readSized(buf); err != nil {
 		return nil, err
 	}
-
-	var status uint32
-	if err := binary.Read(buf, binary.LittleEndian, &status); err != nil {
+	if item.Status, err = decodeStatus(buf); err != nil {
 		return nil, err
 	}
-	if status < 100 || status > 999 {
-		return nil, fmt.Errorf("cache item: invalid status code %d", status)
-	}
-	item.Status = int(status)
-
-	headerLen, err := readCount(buf)
-	if err != nil {
+	if item.Header, err = decodeHeaders(buf); err != nil {
 		return nil, err
 	}
-	item.Header = make(http.Header, headerLen)
-	for i := uint32(0); i < headerLen; i++ {
-		key, err := readSized(buf)
-		if err != nil {
-			return nil, err
-		}
-
-		valuesLen, err := readCount(buf)
-		if err != nil {
-			return nil, err
-		}
-		values := make([]string, valuesLen)
-		for j := uint32(0); j < valuesLen; j++ {
-			value, err := readSized(buf)
-			if err != nil {
-				return nil, err
-			}
-			values[j] = string(value)
-		}
-
-		item.Header[string(key)] = values
-	}
-
-	expirationBytes, err := readSized(buf)
-	if err != nil {
-		return nil, err
-	}
-	if err := item.Expiration.UnmarshalBinary(expirationBytes); err != nil {
+	if item.Expiration, err = decodeExpiration(buf); err != nil {
 		return nil, err
 	}
 
