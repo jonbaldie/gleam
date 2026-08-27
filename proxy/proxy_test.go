@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"jonbaldie/gleam/cache"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -501,5 +504,217 @@ func BenchmarkCacheKeyForRequestDefaultVaryHeadersManyUnrelatedHeaders(b *testin
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = cacheKeyForRequest(req)
+	}
+}
+
+func TestProxyCachedTrailersRemainTrailers(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Trailer", "X-Origin-Trailer")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("body"))
+		w.Header().Set("X-Origin-Trailer", "done")
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	first, err := http.Get(proxy.URL + "/with-trailer")
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	_, _ = io.ReadAll(first.Body)
+	_ = first.Body.Close()
+	if got := first.Header.Get("X-Origin-Trailer"); got != "" {
+		t.Fatalf("first response unexpectedly promoted trailer to header: %q", got)
+	}
+	if got := first.Trailer.Get("X-Origin-Trailer"); got != "done" {
+		t.Fatalf("first response trailer = %q, want done", got)
+	}
+
+	second, err := http.Get(proxy.URL + "/with-trailer")
+	if err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
+	_, _ = io.ReadAll(second.Body)
+	_ = second.Body.Close()
+	if got := second.Header.Get("X-Origin-Trailer"); got != "" {
+		t.Fatalf("cached response promoted trailer to ordinary header: %q", got)
+	}
+	if got := second.Trailer.Get("X-Origin-Trailer"); got != "done" {
+		t.Fatalf("cached response trailer = %q, want done", got)
+	}
+}
+
+func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Connection") != "Upgrade" || r.Header.Get("Upgrade") != "websocket" {
+			t.Fatalf("origin did not receive upgrade request: %v", r.Header)
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("origin response writer is not a hijacker")
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("origin hijack failed: %v", err)
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+		_ = buf.Flush()
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/socket", nil)
+	if err != nil {
+		t.Fatalf("new request failed: %v", err)
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("upgrade request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		dump, _ := httputil.DumpResponse(resp, true)
+		t.Fatalf("upgrade status = %d, want 101; response:\n%s", resp.StatusCode, dump)
+	}
+}
+
+func TestProxyDoesNotStoreNoStoreResponses(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = fmt.Fprintf(w, "response-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/secret", nil)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because Cache-Control: no-store forbids storage", got)
+	}
+	if first.Body.String() == second.Body.String() {
+		t.Fatalf("second response was served from cache despite no-store: %q", second.Body.String())
+	}
+}
+
+func TestProxyRequestNoCacheRevalidatesEveryTime(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		_, _ = fmt.Fprintf(w, "response-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req.Header.Set("Cache-Control", "no-cache")
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because request Cache-Control: no-cache requires revalidation", got)
+	}
+	if first.Body.String() == second.Body.String() {
+		t.Fatalf("second no-cache request was served from cache: %q", second.Body.String())
+	}
+}
+
+func TestProxyDoesNotReuseVaryStarResponses(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Vary", "*")
+		_, _ = fmt.Fprintf(w, "response-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because Vary: * forbids reuse from cache", got)
+	}
+	if first.Body.String() == second.Body.String() {
+		t.Fatalf("second Vary: * response was served from cache: %q", second.Body.String())
+	}
+}
+
+func TestProxyStreamingGetFlushesFirstChunk(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("origin response writer is not a flusher")
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("first\n"))
+		flusher.Flush()
+		time.Sleep(500 * time.Millisecond)
+		_, _ = w.Write([]byte("second\n"))
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	resp, err := http.Get(proxy.URL + "/stream")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	lineCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(resp.Body).ReadString('\n')
+		if err != nil {
+			errCh <- err
+			return
+		}
+		lineCh <- line
+	}()
+
+	select {
+	case line := <-lineCh:
+		if line != "first\n" {
+			t.Fatalf("first line = %q, want first\\n", line)
+		}
+	case err := <-errCh:
+		t.Fatalf("read first line failed: %v", err)
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("first flushed chunk was not delivered before the origin wrote the second chunk")
 	}
 }

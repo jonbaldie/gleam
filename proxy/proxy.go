@@ -1,9 +1,12 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -23,23 +26,27 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
+			if isUpgradeRequest(r) || requestRequiresRevalidation(r) {
+				p.ServeHTTP(w, r)
+				return
+			}
+
 			cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 			if cachedItem, found := c.Get(cacheKey); found {
-				for key, values := range cachedItem.Header {
-					for _, value := range values {
-						w.Header().Add(key, value)
-					}
-				}
-				w.WriteHeader(cachedItem.Status)
-				_, _ = w.Write(cachedItem.Content)
+				writeCachedItem(w, cachedItem)
 				return
 			}
 
 			crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
 			p.ServeHTTP(crw, r)
 
-			if crw.status >= http.StatusOK && crw.status < http.StatusMultipleChoices {
-				c.Set(cacheKey, cache.CacheItem{Content: crw.buf.Bytes(), Header: crw.Header(), Status: crw.status}, ttl)
+			if responseIsCacheable(crw.status, crw.cachedHeader) {
+				c.Set(cacheKey, cache.CacheItem{
+					Content: crw.buf.Bytes(),
+					Header:  crw.cachedHeader,
+					Trailer: crw.cachedTrailer(),
+					Status:  crw.status,
+				}, ttl)
 			}
 			return
 		}
@@ -75,22 +82,138 @@ func ParseVaryHeaders(raw string) []string {
 
 type cacheResponseWriter struct {
 	http.ResponseWriter
-	buf    *bytes.Buffer
-	status int
+	buf          *bytes.Buffer
+	status       int
+	cachedHeader http.Header
 }
 
 func (w *cacheResponseWriter) WriteHeader(status int) {
 	w.status = status
+	w.cachedHeader = cloneHeader(w.ResponseWriter.Header())
 	w.ResponseWriter.WriteHeader(status)
 }
 
 func (w *cacheResponseWriter) Write(b []byte) (int, error) {
+	if w.cachedHeader == nil {
+		w.WriteHeader(w.status)
+	}
 	w.buf.Write(b)
 	return w.ResponseWriter.Write(b)
 }
 
 func (w *cacheResponseWriter) Header() http.Header {
 	return w.ResponseWriter.Header()
+}
+
+func (w *cacheResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not implement http.Hijacker")
+	}
+	return hijacker.Hijack()
+}
+
+func (w *cacheResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *cacheResponseWriter) cachedTrailer() http.Header {
+	if w.cachedHeader == nil {
+		return nil
+	}
+
+	trailers := http.Header{}
+	for _, name := range commaSeparatedHeaderValues(w.cachedHeader.Values("Trailer")) {
+		for _, value := range w.ResponseWriter.Header().Values(name) {
+			trailers.Add(name, value)
+		}
+	}
+	if len(trailers) == 0 {
+		return nil
+	}
+	return trailers
+}
+
+func writeCachedItem(w http.ResponseWriter, item *cache.CacheItem) {
+	for key, values := range item.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	for name := range item.Trailer {
+		if !headerContainsToken(w.Header().Values("Trailer"), name) {
+			w.Header().Add("Trailer", name)
+		}
+	}
+
+	w.WriteHeader(item.Status)
+	_, _ = w.Write(item.Content)
+
+	for key, values := range item.Trailer {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+}
+
+func isUpgradeRequest(r *http.Request) bool {
+	return headerContainsToken(r.Header.Values("Connection"), "upgrade") && r.Header.Get("Upgrade") != ""
+}
+
+func requestRequiresRevalidation(r *http.Request) bool {
+	return headerContainsToken(r.Header.Values("Cache-Control"), "no-cache")
+}
+
+func responseIsCacheable(status int, header http.Header) bool {
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return false
+	}
+	if headerContainsToken(header.Values("Cache-Control"), "no-store") {
+		return false
+	}
+	for _, value := range header.Values("Vary") {
+		for _, part := range strings.Split(value, ",") {
+			if strings.TrimSpace(part) == "*" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func headerContainsToken(values []string, token string) bool {
+	for _, value := range commaSeparatedHeaderValues(values) {
+		if strings.EqualFold(value, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func commaSeparatedHeaderValues(values []string) []string {
+	var parts []string
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+	}
+	return parts
+}
+
+func cloneHeader(header http.Header) http.Header {
+	if len(header) == 0 {
+		return nil
+	}
+	clone := make(http.Header, len(header))
+	for key, values := range header {
+		clone[key] = append([]string(nil), values...)
+	}
+	return clone
 }
 
 // Include configured request headers in the cache key so one caller's GET
