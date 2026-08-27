@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"fmt"
 	"jonbaldie/gleam/cache"
 	"net/http"
 	"net/http/httptest"
@@ -176,6 +177,43 @@ func TestProxyCachesEquivalentGetsWithSameAuthorizationHeader(t *testing.T) {
 	}
 }
 
+func TestProxySeparatesCachedGetsByConfiguredVaryHeader(t *testing.T) {
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(r.Header.Get("X-Tenant")))
+	}))
+	defer origin.Close()
+
+	originURL, err := url.Parse(origin.URL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+	c := newMockCache()
+	handler := NewWithVaryHeaders(originURL, c, time.Minute, []string{"X-Tenant"})
+
+	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	firstRequest.Header.Set("X-Tenant", "alpha")
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, firstRequest)
+
+	secondRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	secondRequest.Header.Set("X-Tenant", "beta")
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, secondRequest)
+
+	if first.Body.String() != "alpha" {
+		t.Fatalf("expected first body %q, got %q", "alpha", first.Body.String())
+	}
+	if second.Body.String() != "beta" {
+		t.Fatalf("expected second body %q, got %q", "beta", second.Body.String())
+	}
+	if got := originCalls.Load(); got != 2 {
+		t.Fatalf("expected distinct configured vary headers to bypass shared cache, got %d origin calls", got)
+	}
+}
+
 func mustCachingProxyHandler(t *testing.T, originURL string, c cache.Cache, ttl time.Duration) http.Handler {
 	t.Helper()
 
@@ -255,10 +293,11 @@ func TestCacheKeyForRequestIsDeterministicWithMultipleHeaders(t *testing.T) {
 	r.Header.Set("Z-Last", "zval")
 	r.Header.Set("A-First", "aval")
 	r.Header.Set("M-Middle", "mval")
+	varyHeaders := []string{"A-First", "M-Middle", "Z-Last"}
 
 	var want string
 	for i := 0; i < 30; i++ {
-		got := cacheKeyForRequest(r)
+		got := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 		if i == 0 {
 			want = got
 		} else if got != want {
@@ -279,7 +318,7 @@ func TestCacheKeyForRequestMultiValueHeaderOrderIsNormalized(t *testing.T) {
 	r2.Header.Add("Accept", "application/json")
 	r2.Header.Add("Accept", "text/html")
 
-	if cacheKeyForRequest(r1) != cacheKeyForRequest(r2) {
+	if cacheKeyForRequestWithVaryHeaders(r1, []string{"Accept"}) != cacheKeyForRequestWithVaryHeaders(r2, []string{"Accept"}) {
 		t.Error("expected same cache key for identical multi-value headers regardless of insertion order")
 	}
 }
@@ -294,7 +333,7 @@ func TestCacheKeyForRequestDependsOnHeaderName(t *testing.T) {
 	r2 := httptest.NewRequest(http.MethodGet, "/path", nil)
 	r2.Header.Set("X-Header-Beta", "same-value")
 
-	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+	if cacheKeyForRequestWithVaryHeaders(r1, []string{"X-Header-Alpha"}) == cacheKeyForRequestWithVaryHeaders(r2, []string{"X-Header-Beta"}) {
 		t.Error("expected different cache keys for different header names with the same value")
 	}
 }
@@ -310,7 +349,7 @@ func TestCacheKeyForRequestSeparatesHeaderNameFromValue(t *testing.T) {
 	r2 := httptest.NewRequest(http.MethodGet, "/path", nil)
 	r2.Header.Set("Ab", "c")
 
-	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+	if cacheKeyForRequestWithVaryHeaders(r1, []string{"A"}) == cacheKeyForRequestWithVaryHeaders(r2, []string{"Ab"}) {
 		t.Error("expected different cache keys: header name and value must be delimited by ':'")
 	}
 }
@@ -327,7 +366,7 @@ func TestCacheKeyForRequestSeparatesHeaderEntries(t *testing.T) {
 	r2 := httptest.NewRequest(http.MethodGet, "/path", nil)
 	r2.Header.Set("A", "valB:val2")
 
-	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+	if cacheKeyForRequestWithVaryHeaders(r1, []string{"A", "B"}) == cacheKeyForRequestWithVaryHeaders(r2, []string{"A"}) {
 		t.Error("expected different cache keys: header entries must be separated by a newline")
 	}
 }
@@ -401,6 +440,30 @@ func TestCacheKeyForRequestNoHeadersHasNoHash(t *testing.T) {
 	}
 }
 
+func TestCacheKeyForRequestIgnoresHeadersOutsideDefaultVarySet(t *testing.T) {
+	r1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r1.Header.Set("X-Request-Id", "first")
+
+	r2 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r2.Header.Set("X-Request-Id", "second")
+
+	if cacheKeyForRequest(r1) != cacheKeyForRequest(r2) {
+		t.Error("expected default cache key to ignore headers outside the vary set")
+	}
+}
+
+func TestCacheKeyForRequestSeparatesDefaultCookieHeader(t *testing.T) {
+	r1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r1.Header.Set("Cookie", "session=alpha")
+
+	r2 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	r2.Header.Set("Cookie", "session=beta")
+
+	if cacheKeyForRequest(r1) == cacheKeyForRequest(r2) {
+		t.Error("expected default cache key to vary by Cookie")
+	}
+}
+
 // TestCacheKeyForRequestDoesNotCollideOnCommaInValue guards against the bug where
 // strings.Join(values, ",") was used to serialise per-header values, making two requests
 // whose values sort-and-join to the same string indistinguishable in the cache key.
@@ -421,9 +484,22 @@ func TestCacheKeyForRequestDoesNotCollideOnCommaInValue(t *testing.T) {
 	r2 := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	r2.Header["X-Token"] = []string{"a", "b,c"}
 
-	k1 := cacheKeyForRequest(r1)
-	k2 := cacheKeyForRequest(r2)
+	k1 := cacheKeyForRequestWithVaryHeaders(r1, []string{"X-Token"})
+	k2 := cacheKeyForRequestWithVaryHeaders(r2, []string{"X-Token"})
 	if k1 == k2 {
 		t.Errorf("collision: requests with different X-Token value sets produced the same cache key %q", k1)
+	}
+}
+
+func BenchmarkCacheKeyForRequestDefaultVaryHeadersManyUnrelatedHeaders(b *testing.B) {
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req.Header.Set("Authorization", "Bearer alpha")
+	for i := 0; i < 100; i++ {
+		req.Header.Set(fmt.Sprintf("X-Irrelevant-%03d", i), strings.Repeat("value", 10))
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = cacheKeyForRequest(req)
 	}
 }

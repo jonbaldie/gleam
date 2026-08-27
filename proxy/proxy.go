@@ -15,11 +15,15 @@ import (
 )
 
 func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
+	return NewWithVaryHeaders(origin, c, ttl, defaultVaryHeaders)
+}
+
+func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
 	p := httputil.NewSingleHostReverseProxy(origin)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			cacheKey := cacheKeyForRequest(r)
+			cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 			if cachedItem, found := c.Get(cacheKey); found {
 				for key, values := range cachedItem.Header {
 					for _, value := range values {
@@ -44,6 +48,31 @@ func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
 	})
 }
 
+var defaultVaryHeaders = []string{"Authorization", "Cookie"}
+
+func DefaultVaryHeaders() []string {
+	return append([]string(nil), defaultVaryHeaders...)
+}
+
+func ParseVaryHeaders(raw string) []string {
+	parts := strings.Split(raw, ",")
+	headers := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
+		}
+		name = http.CanonicalHeaderKey(name)
+		if _, found := seen[name]; found {
+			continue
+		}
+		seen[name] = struct{}{}
+		headers = append(headers, name)
+	}
+	return headers
+}
+
 type cacheResponseWriter struct {
 	http.ResponseWriter
 	buf    *bytes.Buffer
@@ -64,23 +93,26 @@ func (w *cacheResponseWriter) Header() http.Header {
 	return w.ResponseWriter.Header()
 }
 
-// Include request headers in the cache key so one caller's GET response is not
-// served to another caller with different request metadata.
+// Include configured request headers in the cache key so one caller's GET
+// response is not served to another caller with different cache-relevant
+// request metadata.
 func cacheKeyForRequest(r *http.Request) string {
+	return cacheKeyForRequestWithVaryHeaders(r, defaultVaryHeaders)
+}
+
+func cacheKeyForRequestWithVaryHeaders(r *http.Request, varyHeaders []string) string {
 	base := r.Host + "#" + r.URL.String()
-	if len(r.Header) == 0 {
+	if len(r.Header) == 0 || len(varyHeaders) == 0 {
 		return base
 	}
 
-	headerNames := make([]string, 0, len(r.Header))
-	for name := range r.Header {
-		headerNames = append(headerNames, name)
-	}
-	sort.Strings(headerNames)
-
 	var signature strings.Builder
-	for _, name := range headerNames {
-		values := append([]string(nil), r.Header.Values(name)...)
+	for _, name := range varyHeaders {
+		values := r.Header.Values(name)
+		if len(values) == 0 {
+			continue
+		}
+		values = append([]string(nil), values...)
 		sort.Strings(values)
 		safeName := strings.ReplaceAll(name, "\n", "\\n")
 		signature.WriteString(safeName)
@@ -92,6 +124,9 @@ func cacheKeyForRequest(r *http.Request) string {
 		}
 		signature.WriteString(strings.Join(escapedValues, "\x00"))
 		signature.WriteByte('\n')
+	}
+	if signature.Len() == 0 {
+		return base
 	}
 
 	sum := sha256.Sum256([]byte(signature.String()))

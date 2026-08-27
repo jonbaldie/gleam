@@ -7,7 +7,7 @@ import (
 )
 
 // FuzzCacheKeyForRequest ensures key generation never panics and exercises the
-// header-signature path with arbitrary request metadata.
+// configured header-signature path with arbitrary request metadata.
 func FuzzCacheKeyForRequest(f *testing.F) {
 	f.Add("/path", "Authorization", "Bearer x")
 	f.Add("/", "", "")
@@ -18,6 +18,6 @@ func FuzzCacheKeyForRequest(f *testing.F) {
 		if hkey != "" {
 			r.Header.Add(hkey, hval)
 		}
-		_ = cacheKeyForRequest(r)
+		_ = cacheKeyForRequestWithVaryHeaders(r, variedHeaderNames(hkey))
 	})
 }

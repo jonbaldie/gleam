@@ -15,9 +15,10 @@ func FuzzCacheKeyCollisions(f *testing.F) {
 	f.Fuzz(func(t *testing.T, path1, key1, val1, path2, key2, val2 string) {
 		r1 := newTestRequest(path1, key1, val1)
 		r2 := newTestRequest(path2, key2, val2)
+		varyHeaders := variedHeaderNames(key1, key2)
 
-		k1 := cacheKeyForRequest(r1)
-		k2 := cacheKeyForRequest(r2)
+		k1 := cacheKeyForRequestWithVaryHeaders(r1, varyHeaders)
+		k2 := cacheKeyForRequestWithVaryHeaders(r2, varyHeaders)
 
 		// Identical request parameters must produce identical keys
 		if path1 == path2 && key1 == key2 && val1 == val2 {
@@ -27,7 +28,7 @@ func FuzzCacheKeyCollisions(f *testing.F) {
 		}
 
 		// Keys must be deterministic: calling twice produces same result
-		k1again := cacheKeyForRequest(r1)
+		k1again := cacheKeyForRequestWithVaryHeaders(r1, varyHeaders)
 		if k1 != k1again {
 			t.Fatalf("cache key generation is non-deterministic")
 		}
@@ -63,15 +64,33 @@ func FuzzCacheKeyCollisionSearch(f *testing.F) {
 		if hname3 != "" {
 			r2.Header.Add(hname3, hval3)
 		}
+		varyHeaders := variedHeaderNames(hname1, hname2, hname3)
 
 		if !headersEqual(r1.Header, r2.Header) {
-			k1 := cacheKeyForRequest(r1)
-			k2 := cacheKeyForRequest(r2)
+			k1 := cacheKeyForRequestWithVaryHeaders(r1, varyHeaders)
+			k2 := cacheKeyForRequestWithVaryHeaders(r2, varyHeaders)
 			if k1 == k2 {
 				t.Fatalf("cache.Cache key collision found!\nReq1 Header: %v\nReq2 Header: %v\nBoth keys: %s", r1.Header, r2.Header, k1)
 			}
 		}
 	})
+}
+
+func variedHeaderNames(names ...string) []string {
+	headers := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		name = http.CanonicalHeaderKey(name)
+		if _, found := seen[name]; found {
+			continue
+		}
+		seen[name] = struct{}{}
+		headers = append(headers, name)
+	}
+	return headers
 }
 
 func headersEqual(h1, h2 http.Header) bool {
