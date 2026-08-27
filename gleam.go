@@ -111,12 +111,13 @@ func (r *RedisCache) Get(key string) (*cache.CacheItem, bool) {
 
 // Config holds all configurable options
 type Config struct {
-	OriginURL string
-	Origin    *url.URL
-	TTL       time.Duration
-	Port      string
-	RedisURL  string
-	CacheType string
+	OriginURL   string
+	Origin      *url.URL
+	TTL         time.Duration
+	Port        string
+	RedisURL    string
+	CacheType   string
+	VaryHeaders []string
 }
 
 // loadConfig loads configuration from environment variables
@@ -142,6 +143,10 @@ func loadConfigFromEnv() (*Config, error) {
 	if cacheType != "redis" && cacheType != "memory" {
 		return nil, fmt.Errorf("invalid CACHE_TYPE, must be 'memory' (default) or 'redis'")
 	}
+	varyHeaders := proxy.DefaultVaryHeaders()
+	if raw, ok := os.LookupEnv("CACHE_VARY_HEADERS"); ok {
+		varyHeaders = proxy.ParseVaryHeaders(raw)
+	}
 
 	originURL := getenv("ORIGIN_URL", "https://httpbin.org")
 	origin, err := parseOriginURL(originURL)
@@ -150,12 +155,13 @@ func loadConfigFromEnv() (*Config, error) {
 	}
 
 	return &Config{
-		OriginURL: originURL,
-		Origin:    origin,
-		TTL:       time.Duration(ttlMinutes) * time.Minute,
-		Port:      getenv("PORT", "8080"),
-		RedisURL:  redisUrl,
-		CacheType: cacheType,
+		OriginURL:   originURL,
+		Origin:      origin,
+		TTL:         time.Duration(ttlMinutes) * time.Minute,
+		Port:        getenv("PORT", "8080"),
+		RedisURL:    redisUrl,
+		CacheType:   cacheType,
+		VaryHeaders: varyHeaders,
 	}, nil
 }
 
@@ -193,7 +199,7 @@ func main() {
 	} else {
 		c = NewSimpleCache()
 	}
-	handler := proxy.New(config.Origin, c, config.TTL)
+	handler := proxy.NewWithVaryHeaders(config.Origin, c, config.TTL, config.VaryHeaders)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s", r.Method, r.URL.Path)

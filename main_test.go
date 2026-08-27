@@ -16,8 +16,7 @@ import (
 func TestSimpleCache(t *testing.T) {
 	c := NewSimpleCache()
 
-	// Test Set and Get
-	c.Set("key1", cache.CacheItem{Content: []byte("value1"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Minute)
+	c.Set("key1", cache.CacheItem{Content: []byte("value1"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 	item, found := c.Get("key1")
 	if !found {
 		t.Error("Expected to find key1 in cache")
@@ -26,9 +25,8 @@ func TestSimpleCache(t *testing.T) {
 		t.Errorf("Expected value1, got %s", string(item.Content))
 	}
 
-	// Test expiration
-	c.Set("key2", cache.CacheItem{Content: []byte("value2"), Header: http.Header{}, Status: http.StatusOK}, 1*time.Nanosecond)
-	time.Sleep(1 * time.Millisecond)
+	c.Set("key2", cache.CacheItem{Content: []byte("value2"), Header: http.Header{}, Status: http.StatusOK}, time.Nanosecond)
+	time.Sleep(time.Millisecond)
 	_, found = c.Get("key2")
 	if found {
 		t.Error("Expected key2 to be expired")
@@ -64,6 +62,9 @@ func TestLoadConfigFromEnvDefaults(t *testing.T) {
 	}
 	if config.CacheType != "memory" {
 		t.Errorf("Expected default CacheType memory, got %s", config.CacheType)
+	}
+	if got, want := strings.Join(config.VaryHeaders, ","), "Authorization,Cookie"; got != want {
+		t.Fatalf("expected default vary headers %q, got %q", want, got)
 	}
 }
 
@@ -171,8 +172,6 @@ func TestParseOriginURLRejectsMissingScheme(t *testing.T) {
 	}
 }
 
-// TestSimpleCacheStoresAndReturnsHeaders kills gleam.go:82 (composite/field-clear drops
-// the header field from the stored cache.CacheItem, causing cached responses to carry no headers).
 func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
 	c := NewSimpleCache()
 	header := http.Header{
@@ -193,11 +192,6 @@ func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
 	}
 }
 
-// TestLoadConfigFromEnvAcceptsCacheTypeRedis kills three mutations at gleam.go:214
-// (conditional/negated flips the redis check to ==, expression/remove drops the redis
-// term, expression/string-literal replaces "redis" with "") and gleam.go:230
-// (composite/field-clear drops CacheType from the returned Config).
-// All four mutations would either reject a valid "redis" value or lose the field.
 func TestLoadConfigFromEnvAcceptsCacheTypeRedis(t *testing.T) {
 	t.Setenv("ORIGIN_URL", "https://example.com")
 	t.Setenv("CACHE_TYPE", "redis")
@@ -211,8 +205,34 @@ func TestLoadConfigFromEnvAcceptsCacheTypeRedis(t *testing.T) {
 	}
 }
 
-// TestLoadConfigFromEnvAcceptsTTLMinutesOf1 kills gleam.go:208 (numbers/incrementer
-// changes the guard from <= 0 to <= 1, incorrectly rejecting TTL_MINUTES=1).
+func TestLoadConfigFromEnvParsesCacheVaryHeaders(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("CACHE_VARY_HEADERS", " accept, authorization, ACCEPT ")
+
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected config to load, got error: %v", err)
+	}
+
+	if got, want := strings.Join(config.VaryHeaders, ","), "Accept,Authorization"; got != want {
+		t.Fatalf("expected parsed vary headers %q, got %q", want, got)
+	}
+}
+
+func TestLoadConfigFromEnvAllowsEmptyCacheVaryHeaders(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("CACHE_VARY_HEADERS", "")
+
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected config to load, got error: %v", err)
+	}
+
+	if len(config.VaryHeaders) != 0 {
+		t.Fatalf("expected empty vary headers, got %#v", config.VaryHeaders)
+	}
+}
+
 func TestLoadConfigFromEnvAcceptsTTLMinutesOf1(t *testing.T) {
 	t.Setenv("ORIGIN_URL", "https://example.com")
 	t.Setenv("TTL_MINUTES", "1")
@@ -226,22 +246,7 @@ func TestLoadConfigFromEnvAcceptsTTLMinutesOf1(t *testing.T) {
 	}
 }
 
-// TestProxyDoesNotCacheStatus300 kills gleam.go:47 (expression/comparison changes
-// crw.status < 300 to crw.status <= 300, causing status-300 responses to be cached).
-
-// 300
-
-// TestProxyCopiesAllResponseHeadersOnCacheHit kills three mutations:
-//   - gleam.go:35 (loop/range_break inserts break at top of outer header loop, skipping all headers)
-//   - gleam.go:36 (loop/range_break inserts break at top of inner values loop, adding no values)
-//   - gleam.go:36 (statement/remove drops w.Header().Add, silently discarding each header value)
-//
-// All three produce a cache-hit response that is missing the upstream response headers.
-
-// TestParseOriginURLWrapsUnderlyingParseError kills gleam.go:237 (expression/errorf-wrap
-// downgrades %w to %v so the wrapped *url.Error is no longer reachable via errors.As).
 func TestParseOriginURLWrapsUnderlyingParseError(t *testing.T) {
-	// A tab character in the URL path causes url.Parse to return a *url.Error.
 	_, err := parseOriginURL("https://example.com/\tbad")
 	if err == nil {
 		t.Skip("url.Parse accepted this input on this Go version; skipping wrap test")
@@ -252,67 +257,6 @@ func TestParseOriginURLWrapsUnderlyingParseError(t *testing.T) {
 	}
 }
 
-// TestCacheKeyForRequestIsDeterministicWithMultipleHeaders kills gleam.go:268
-// (statement/remove drops sort.Strings(headerNames), making the hash dependent on
-// non-deterministic map iteration order).
-// Running 30 iterations with 3 headers gives 3! = 6 possible orderings; the probability
-// that all 30 iterations happen to return the same unsorted order is negligible.
-
-// TestCacheKeyForRequestMultiValueHeaderOrderIsNormalized kills gleam.go:273
-// (statement/remove drops sort.Strings(values), so two requests with the same multi-value
-// header in different insertion order hash to different keys and miss the cache).
-
-// TestCacheKeyForRequestDependsOnHeaderName kills gleam.go:274 (statement/remove
-// drops signature.WriteString(name), so headers with different names but the same value
-// hash identically and collide in the cache).
-
-// TestCacheKeyForRequestSeparatesHeaderNameFromValue kills gleam.go:275
-// (statement/remove drops signature.WriteByte(':'), so header name "A" value "bc"
-// and header name "Ab" value "c" both produce the raw string "Abc" and collide).
-
-// Without the ':' separator both produce the concatenation "Abc".
-
-// TestCacheKeyForRequestSeparatesHeaderEntries kills gleam.go:277 (statement/remove
-// drops signature.WriteByte('\n'), so two headers "A"="val","B"="val2" concatenate to
-// "A:valB:val2" — identical to one header "A"="valB:val2" — causing a collision).
-
-// Without '\n' both produce the concatenation "A:valB:val2".
-
-// TestCacheKeyForRequestDifferentPathsNoHeaders kills the return base mutant
-// by ensuring that two requests with different paths but no headers still
-// generate distinct keys.
-
-// TestCacheResponseWriterDefaultsToStatusOK kills gleam.go:44 (composite/field-clear
-// drops Status: http.StatusOK from the CacheResponseWriter literal, leaving status at its
-// zero value 0). If WriteHeader is never called — which cannot happen with httputil.ReverseProxy
-// but is the contract the type itself must honour — a status of 0 fails the
-// crw.status >= http.StatusOK guard at gleam.go:47, so the response would silently not be
-// cached. Verifying the field is present and equals 200 kills the mutation without requiring
-// a full integration scenario.
-
-// Do not call WriteHeader; the initialised value must survive intact.
-
-// TestCacheKeyForRequestNoHeadersHasNoHash kills the return base branch/if and numbers/decrementer
-// mutants by ensuring that when headers are empty, the cache key does not contain the hash suffix.
-
-// TestCacheKeyForRequestDoesNotCollideOnCommaInValue guards against the bug where
-// strings.Join(values, ",") was used to serialise per-header values, making two requests
-// whose values sort-and-join to the same string indistinguishable in the cache key.
-//
-// Concrete collision:
-//   - values ["a,b", "c"] → sorted: ["a,b","c"] → joined: "a,b,c"
-//   - values ["a", "b,c"] → sorted: ["a","b,c"] → joined: "a,b,c"
-//
-// With a comma-containing value these two distinct value-sets produce the same signature
-// fragment, so a request carrying X-Token: a,b + X-Token: c would be served the cached
-// response for X-Token: a + X-Token: b,c (or vice-versa), violating per-user isolation.
-// The fix uses \x00 (NUL, invalid in HTTP header values) as the intra-value separator.
-
-// r1: one value contains a comma; r2: same textual bytes split differently.
-
-// TestSimpleCacheConcurrentSetsDoNotRace kills gleam.go:79 (statement/defer-remove
-// converts "defer c.mu.Unlock()" to an immediate unlock, releasing the mutex before
-// the map write and causing a concurrent-map-write panic under contention).
 func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 	c := NewSimpleCache()
 	var wg sync.WaitGroup
@@ -321,9 +265,6 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func(n int) {
 			defer wg.Done()
-			// Deliberately reuse a small key space to maximise concurrent access
-			// to the same map bucket, reliably triggering Go's built-in
-			// concurrent-map-write detector if the mutex is not held.
 			key := fmt.Sprintf("key-%d", n%5)
 			c.Set(key, cache.CacheItem{Content: []byte(fmt.Sprintf("v%d", n)), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 		}(i)
@@ -331,8 +272,6 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 	wg.Wait()
 }
 
-// TestNewRedisCache_ValidURL verifies that NewRedisCache accurately parses the REDIS_URL
-// and configures the go-redis v8 client properly according to the documented format.
 func TestNewRedisCache_ValidURL(t *testing.T) {
 	redisURL := "redis://myuser:mypassword@myhost:1234/5"
 	c := NewRedisCache(redisURL, &codec.BinaryCodec{})
@@ -352,8 +291,6 @@ func TestNewRedisCache_ValidURL(t *testing.T) {
 	}
 }
 
-// TestNewRedisCache_DefaultURL verifies that NewRedisCache accurately parses the default
-// REDIS_URL documented in the README.
 func TestNewRedisCache_DefaultURL(t *testing.T) {
 	redisURL := "redis://localhost:6379/0"
 	c := NewRedisCache(redisURL, &codec.BinaryCodec{})

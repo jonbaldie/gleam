@@ -18,6 +18,7 @@ Set the following environment variables to configure Gleam:
 - `PORT`: Port to run Gleam on (default: 8080)
 - `REDIS_URL`: Redis URL (optional, default: redis://localhost:6379/0)
 - `CACHE_TYPE`: Set to 'memory' or 'redis' (default: memory)
+- `CACHE_VARY_HEADERS`: Comma-separated request headers to include in cache keys (default: Authorization,Cookie; set to an empty string to ignore request headers)
 
 ## Usage
 
