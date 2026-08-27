@@ -15,6 +15,7 @@ type Cache interface {
 type CacheItem struct {
 	Content    []byte
 	Header     http.Header
+	Trailer    http.Header
 	Status     int
 	Expiration time.Time
 }

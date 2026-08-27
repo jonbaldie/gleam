@@ -112,11 +112,12 @@ func TestDecode_Truncated(t *testing.T) {
 	}
 	encoded, _ := codec.Encode(item)
 	decoded, _ := base64.StdEncoding.DecodeString(string(encoded))
+	oldFormatLen := len(decoded) - 4
 
 	for i := 1; i < len(decoded); i++ {
 		trunc := base64.StdEncoding.EncodeToString(decoded[:i])
 		_, err := codec.Decode([]byte(trunc))
-		if err == nil {
+		if err == nil && i != oldFormatLen {
 			t.Fatalf("Expected error for truncated payload at length %d", i)
 		}
 	}

@@ -110,7 +110,10 @@ func encodeTo(w io.Writer, item cache.CacheItem) error {
 	if err := encodeHeaders(w, item.Header); err != nil {
 		return err
 	}
-	return encodeExpiration(w, item.Expiration)
+	if err := encodeExpiration(w, item.Expiration); err != nil {
+		return err
+	}
+	return encodeHeaders(w, item.Trailer)
 }
 
 // readCount reads a uint32 length/count prefix and rejects any value that
@@ -220,6 +223,11 @@ func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	}
 	if item.Expiration, err = decodeExpiration(buf); err != nil {
 		return nil, err
+	}
+	if buf.Len() > 0 {
+		if item.Trailer, err = decodeHeaders(buf); err != nil {
+			return nil, err
+		}
 	}
 
 	return item, nil

@@ -43,3 +43,31 @@ func TestBinaryCodec_RoundTrip(t *testing.T) {
 		t.Errorf("expiration mismatch: got %v, want %v", decoded.Expiration, item.Expiration)
 	}
 }
+
+func TestBinaryCodec_RoundTripWithTrailers(t *testing.T) {
+	codec := &BinaryCodec{}
+	item := cache.CacheItem{
+		Content: []byte("body"),
+		Header: http.Header{
+			"Content-Type": {"text/plain"},
+			"Trailer":      {"X-Origin-Trailer"},
+		},
+		Trailer:    http.Header{"X-Origin-Trailer": {"done"}},
+		Status:     200,
+		Expiration: time.Now().Truncate(time.Second),
+	}
+
+	data, err := codec.Encode(item)
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+
+	decoded, err := codec.Decode(data)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+
+	if got := decoded.Trailer.Get("X-Origin-Trailer"); got != "done" {
+		t.Fatalf("trailer mismatch: got %q, want done", got)
+	}
+}

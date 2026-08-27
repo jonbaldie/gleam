@@ -32,7 +32,8 @@ func (c *SimpleCache) Set(key string, item cache.CacheItem, ttl time.Duration) {
 
 	c.store[key] = &cache.CacheItem{
 		Content:    item.Content,
-		Header:     item.Header,
+		Header:     cloneHeader(item.Header),
+		Trailer:    cloneHeader(item.Trailer),
 		Status:     item.Status,
 		Expiration: time.Now().Add(ttl),
 	}
@@ -185,6 +186,17 @@ func getenv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func cloneHeader(header http.Header) http.Header {
+	if len(header) == 0 {
+		return nil
+	}
+	clone := make(http.Header, len(header))
+	for key, values := range header {
+		clone[key] = append([]string(nil), values...)
+	}
+	return clone
 }
 
 func main() {
