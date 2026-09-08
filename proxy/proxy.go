@@ -200,6 +200,7 @@ func responseIsCacheable(status int, header http.Header, varyHeaders []string) b
 // leaking one client's data to another.
 func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
 	return headerContainsToken(header.Values("Cache-Control"), "no-store") ||
+		headerContainsToken(header.Values("Cache-Control"), "no-cache") ||
 		headerContainsToken(header.Values("Cache-Control"), "private")
 }
 
