@@ -309,3 +309,45 @@ func TestNewRedisCache_DefaultURL(t *testing.T) {
 		t.Errorf("expected DB %d, got %d", 0, opts.DB)
 	}
 }
+
+func TestSimpleCacheExpiredEntriesAreEvicted(t *testing.T) {
+	c := NewSimpleCache()
+
+	const n = 1000
+	for i := 0; i < n; i++ {
+		c.Set(fmt.Sprintf("key%d", i), cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Nanosecond)
+	}
+	time.Sleep(time.Millisecond)
+
+	for i := 0; i < n; i++ {
+		if _, found := c.Get(fmt.Sprintf("key%d", i)); found {
+			t.Fatalf("expected expired key%d to miss", i)
+		}
+	}
+
+	c.mu.Lock()
+	remaining := len(c.store)
+	c.mu.Unlock()
+	if remaining != 0 {
+		t.Errorf("expected expired entries to be evicted, %d remain in store", remaining)
+	}
+}
+
+func TestSimpleCacheLiveEntriesSurviveExpiredGet(t *testing.T) {
+	c := NewSimpleCache()
+
+	c.Set("live", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
+	c.Set("dead", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Nanosecond)
+	time.Sleep(time.Millisecond)
+
+	if _, found := c.Get("dead"); found {
+		t.Fatal("expected dead to miss")
+	}
+	item, found := c.Get("live")
+	if !found {
+		t.Fatal("expected live to be found after expired-key access")
+	}
+	if string(item.Content) != "value" {
+		t.Errorf("expected value, got %s", string(item.Content))
+	}
+}

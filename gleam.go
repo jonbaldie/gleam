@@ -45,7 +45,11 @@ func (c *SimpleCache) Get(key string) (*cache.CacheItem, bool) {
 	defer c.mu.Unlock()
 
 	item, found := c.store[key]
-	if !found || item.Expiration.Before(time.Now()) {
+	if !found {
+		return nil, false
+	}
+	if item.Expiration.Before(time.Now()) {
+		delete(c.store, key)
 		return nil, false
 	}
 	return item, true
