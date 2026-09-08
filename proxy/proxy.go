@@ -26,7 +26,7 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			if isUpgradeRequest(r) || requestRequiresRevalidation(r) {
+			if isUpgradeRequest(r) || requestRequiresRevalidation(r) || requestHasRange(r) {
 				p.ServeHTTP(w, r)
 				return
 			}
@@ -166,8 +166,18 @@ func requestRequiresRevalidation(r *http.Request) bool {
 	return headerContainsToken(r.Header.Values("Cache-Control"), "no-cache")
 }
 
+// Range requests select a partial representation, so their responses are not
+// interchangeable with a full GET's: bypass the cache in both directions
+// rather than keying on the Range header.
+func requestHasRange(r *http.Request) bool {
+	return len(r.Header.Values("Range")) > 0
+}
+
 func responseIsCacheable(status int, header http.Header, varyHeaders []string) bool {
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return false
+	}
+	if status == http.StatusPartialContent {
 		return false
 	}
 	if headerContainsToken(header.Values("Cache-Control"), "no-store") {
