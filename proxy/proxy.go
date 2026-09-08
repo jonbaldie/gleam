@@ -183,6 +183,14 @@ func responseIsCacheable(status int, header http.Header, varyHeaders []string) b
 	if headerContainsToken(header.Values("Cache-Control"), "no-store") {
 		return false
 	}
+	// In a shared cache, private responses and cookie-setting responses are
+	// user-specific: storing them risks leaking one client's data to another.
+	if headerContainsToken(header.Values("Cache-Control"), "private") {
+		return false
+	}
+	if len(header.Values("Set-Cookie")) > 0 {
+		return false
+	}
 	for _, token := range commaSeparatedHeaderValues(header.Values("Vary")) {
 		if token == "*" || !containsHeaderName(varyHeaders, token) {
 			return false

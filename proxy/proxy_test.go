@@ -617,6 +617,63 @@ func TestProxyDoesNotStoreNoStoreResponses(t *testing.T) {
 	}
 }
 
+func TestBugHuntResponsePrivateIsStored(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Cache-Control", "private")
+		_, _ = fmt.Fprintf(w, "private-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/account", nil)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because Cache-Control: private forbids shared-cache storage", got)
+	}
+	if first.Body.String() == second.Body.String() {
+		t.Fatalf("second response was served from cache despite Cache-Control: private: %q", second.Body.String())
+	}
+}
+
+func TestBugHuntSetCookieResponseIsStored(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Set-Cookie", fmt.Sprintf("session=%d; Path=/", call))
+		_, _ = fmt.Fprintf(w, "cookie-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because Set-Cookie responses must not be stored", got)
+	}
+	if first.Body.String() == second.Body.String() {
+		t.Fatalf("second response was served from cache despite Set-Cookie: %q", second.Body.String())
+	}
+	if cookie := second.Header().Get("Set-Cookie"); cookie == first.Header().Get("Set-Cookie") {
+		t.Fatalf("second response replayed first response's Set-Cookie: %q", cookie)
+	}
+}
+
 func TestProxyRequestNoCacheRevalidatesEveryTime(t *testing.T) {
 	var calls atomic.Int32
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -936,6 +993,48 @@ func TestResponseIsCacheable(t *testing.T) {
 			header:      http.Header{"Cache-Control": []string{"no-store"}},
 			varyHeaders: varyConfig,
 			want:        false,
+		},
+		{
+			name:        "Cache-Control private",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"private"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control private with max-age",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"private, max-age=3600"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control private uppercase",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"PRIVATE"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Set-Cookie header",
+			status:      http.StatusOK,
+			header:      http.Header{"Set-Cookie": []string{"session=1; Path=/"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "multiple Set-Cookie headers",
+			status:      http.StatusOK,
+			header:      http.Header{"Set-Cookie": []string{"a=1; Path=/", "b=2; Path=/"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "public response with max-age still cacheable",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"public, max-age=60"}},
+			varyHeaders: varyConfig,
+			want:        true,
 		},
 		{
 			name:        "Cache-Control no-store in comma list",
