@@ -26,7 +26,10 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			if isUpgradeRequest(r) || requestRequiresRevalidation(r) || requestHasRange(r) {
+			// Request no-store forbids both serving from and storing in
+			// the cache (RFC 9111 section 5.2.1.5), so skip it entirely.
+			noStore := requestForbidsStorage(r)
+			if noStore || isUpgradeRequest(r) || requestRequiresRevalidation(r) || requestHasRange(r) {
 				p.ServeHTTP(w, r)
 				return
 			}
@@ -164,6 +167,10 @@ func isUpgradeRequest(r *http.Request) bool {
 
 func requestRequiresRevalidation(r *http.Request) bool {
 	return headerContainsToken(r.Header.Values("Cache-Control"), "no-cache")
+}
+
+func requestForbidsStorage(r *http.Request) bool {
+	return headerContainsToken(r.Header.Values("Cache-Control"), "no-store")
 }
 
 // Range requests select a partial representation, so their responses are not
