@@ -40,7 +40,7 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 			crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
 			p.ServeHTTP(crw, r)
 
-			if responseIsCacheable(crw.status, crw.cachedHeader) {
+			if responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
 				c.Set(cacheKey, cache.CacheItem{
 					Content: crw.buf.Bytes(),
 					Header:  crw.cachedHeader,
@@ -166,21 +166,28 @@ func requestRequiresRevalidation(r *http.Request) bool {
 	return headerContainsToken(r.Header.Values("Cache-Control"), "no-cache")
 }
 
-func responseIsCacheable(status int, header http.Header) bool {
+func responseIsCacheable(status int, header http.Header, varyHeaders []string) bool {
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		return false
 	}
 	if headerContainsToken(header.Values("Cache-Control"), "no-store") {
 		return false
 	}
-	for _, value := range header.Values("Vary") {
-		for _, part := range strings.Split(value, ",") {
-			if strings.TrimSpace(part) == "*" {
-				return false
-			}
+	for _, token := range commaSeparatedHeaderValues(header.Values("Vary")) {
+		if token == "*" || !containsHeaderName(varyHeaders, token) {
+			return false
 		}
 	}
 	return true
+}
+
+func containsHeaderName(headers []string, target string) bool {
+	for _, h := range headers {
+		if strings.EqualFold(strings.TrimSpace(h), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func headerContainsToken(values []string, token string) bool {
