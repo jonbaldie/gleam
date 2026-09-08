@@ -889,6 +889,13 @@ func TestResponseIsCacheable(t *testing.T) {
 			want:        true,
 		},
 		{
+			name:        "206 Partial Content",
+			status:      http.StatusPartialContent,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
 			name:        "299 boundary status",
 			status:      299,
 			header:      http.Header{},
