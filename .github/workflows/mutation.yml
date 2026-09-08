@@ -21,7 +21,10 @@ jobs:
           go-version-file: go.mod
 
       - name: Install mutago
-        run: go install github.com/quality-gates/mutago/v2/cmd/mutago@latest
+        # Pinned: mutation operators change between releases, so @latest can
+        # move the gate repo-wide without any diff (v2.10.2 dropped covered
+        # MSI from 82% to 79% here). Bump deliberately when raising the floor.
+        run: go install github.com/quality-gates/mutago/v2/cmd/mutago@v2.10.1
 
       - name: Run mutation testing
         # --coverage profiles the package first; mutations on uncovered lines are
