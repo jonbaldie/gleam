@@ -731,6 +731,45 @@ func TestProxyRequestNoCacheRevalidatesEveryTime(t *testing.T) {
 	}
 }
 
+func TestBugHuntRequestNoStoreBypassesAndDoesNotPopulateCache(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		_, _ = fmt.Fprintf(w, "response-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	noStore := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	noStore.Header.Set("Cache-Control", "no-store")
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, noStore)
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, noStore)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because request Cache-Control: no-store must bypass the cache", got)
+	}
+	if first.Body.String() == second.Body.String() {
+		t.Fatalf("second no-store request was served from cache: %q", second.Body.String())
+	}
+
+	// The no-store request's response must not be stored either: a plain
+	// request for the same resource must still reach the origin.
+	plain := httptest.NewRecorder()
+	handler.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, "/resource", nil))
+
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("origin calls = %d, want 3 because a response served for a no-store request must not be stored", got)
+	}
+	if plain.Body.String() != "response-3" {
+		t.Fatalf("plain request body = %q, want %q", plain.Body.String(), "response-3")
+	}
+}
+
 func TestProxyDoesNotReuseVaryStarResponses(t *testing.T) {
 	var calls atomic.Int32
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
