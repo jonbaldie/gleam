@@ -187,7 +187,12 @@ func responseIsCacheable(status int, header http.Header, varyHeaders []string) b
 	if status == http.StatusPartialContent {
 		return false
 	}
-	if headerContainsToken(header.Values("Cache-Control"), "no-store") {
+	if cacheControlForbidsSharedCacheStorage(header) {
+		return false
+	}
+	// In a shared cache, cookie-setting responses are user-specific: storing
+	// them risks replaying one client's cookies to another.
+	if len(header.Values("Set-Cookie")) > 0 {
 		return false
 	}
 	for _, token := range commaSeparatedHeaderValues(header.Values("Vary")) {
@@ -196,6 +201,14 @@ func responseIsCacheable(status int, header http.Header, varyHeaders []string) b
 		}
 	}
 	return true
+}
+
+// In a shared cache, private responses are user-specific: storing them risks
+// leaking one client's data to another.
+func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
+	return headerContainsToken(header.Values("Cache-Control"), "no-store") ||
+		headerContainsToken(header.Values("Cache-Control"), "no-cache") ||
+		headerContainsToken(header.Values("Cache-Control"), "private")
 }
 
 func containsHeaderName(headers []string, target string) bool {
