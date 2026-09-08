@@ -671,6 +671,382 @@ func TestProxyDoesNotReuseVaryStarResponses(t *testing.T) {
 	}
 }
 
+func TestProxyDoesNotCacheResponsesWithUnconfiguredVaryHeaders(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Vary", "X-Custom")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = fmt.Fprintf(w, "response-%s-%d", r.Header.Get("X-Custom"), call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	// Handler uses default vary headers (Authorization, Cookie), which does not include X-Custom
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req1.Header.Set("X-Custom", "alpha")
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req2.Header.Set("X-Custom", "beta")
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because unconfigured Vary header must not be cached", got)
+	}
+	if rec2.Body.String() != "response-beta-2" {
+		t.Fatalf("second request got cached body %q, want response-beta-2", rec2.Body.String())
+	}
+	if _, found := c.Get(cacheKeyForRequest(req1)); found {
+		t.Fatal("response with unconfigured Vary header was stored in cache")
+	}
+}
+
+func TestProxyCachesResponsesWithConfiguredVaryHeaders(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Vary", "Cookie")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = fmt.Fprintf(w, "cookie-%s-%d", r.Header.Get("Cookie"), call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req1.Header.Set("Cookie", "session=alpha")
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	// Same cookie header should hit cache
+	rec1Cached := httptest.NewRecorder()
+	handler.ServeHTTP(rec1Cached, req1)
+
+	// Different cookie header should call origin
+	req2 := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req2.Header.Set("Cookie", "session=beta")
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	// Second cookie request should hit cache now
+	rec2Cached := httptest.NewRecorder()
+	handler.ServeHTTP(rec2Cached, req2)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 (one per unique configured vary value)", got)
+	}
+	if rec1Cached.Body.String() != rec1.Body.String() {
+		t.Fatalf("expected cached body %q, got %q", rec1.Body.String(), rec1Cached.Body.String())
+	}
+	if rec2Cached.Body.String() != rec2.Body.String() {
+		t.Fatalf("expected cached body %q, got %q", rec2.Body.String(), rec2Cached.Body.String())
+	}
+}
+
+func TestProxyCachesResponsesWithCaseInsensitiveVaryHeaders(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Vary", "cookie, AUTHORIZATION")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req.Header.Set("Cookie", "session=alpha")
+	req.Header.Set("Authorization", "Bearer token")
+
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req)
+
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req)
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("origin calls = %d, want 1 because case-insensitive Vary matching should allow caching", got)
+	}
+}
+
+func TestProxyDoesNotCacheResponsesWithPartiallyUnconfiguredVaryHeaders(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		// Cookie is configured, but X-Extra is unconfigured
+		w.Header().Set("Vary", "Cookie, X-Extra")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("response"))
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req.Header.Set("Cookie", "session=alpha")
+	req.Header.Set("X-Extra", "foo")
+
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req)
+
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because partially unconfigured Vary must not be cached", got)
+	}
+}
+
+func TestProxyDoesNotCacheResponsesWithMultipleVaryHeadersContainingUnconfigured(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Add("Vary", "Cookie")
+		w.Header().Add("Vary", "X-Custom")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("multi-vary"))
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req)
+
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because multiple Vary lines with unconfigured header must not be cached", got)
+	}
+}
+
+func TestProxyDoesNotCacheResponsesWithVaryStarCombinedWithConfigured(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Vary", "Cookie, *")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("vary-star-combined"))
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req)
+
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because Vary with * must never be cached", got)
+	}
+}
+
+func TestResponseIsCacheable(t *testing.T) {
+	varyConfig := []string{"Authorization", "Cookie"}
+
+	tests := []struct {
+		name        string
+		status      int
+		header      http.Header
+		varyHeaders []string
+		want        bool
+	}{
+		{
+			name:        "200 OK without Vary",
+			status:      http.StatusOK,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "201 Created without Vary",
+			status:      http.StatusCreated,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "204 No Content without Vary",
+			status:      http.StatusNoContent,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "299 boundary status",
+			status:      299,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "199 status below OK",
+			status:      199,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "300 Multiple Choices",
+			status:      http.StatusMultipleChoices,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "404 Not Found",
+			status:      http.StatusNotFound,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "500 Internal Server Error",
+			status:      http.StatusInternalServerError,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control no-store",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"no-store"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control no-store in comma list",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"private, no-store, max-age=0"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Vary empty string",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{""}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "Vary whitespace and commas only",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"  ,  "}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "Vary star",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"*"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Vary star with whitespace",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"  *  "}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Vary star in list",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"Cookie, *"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Vary single configured header",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"Cookie"}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "Vary all configured headers",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"Cookie, Authorization"}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "Vary case-insensitive lowercase",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"cookie, authorization"}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "Vary case-insensitive uppercase",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"COOKIE"}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "Vary unconfigured header",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"X-Custom"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Vary mix of configured and unconfigured",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"Cookie, X-Custom"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Vary with empty configured headers",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"Cookie"}},
+			varyHeaders: []string{},
+			want:        false,
+		},
+		{
+			name:        "No Vary with empty configured headers",
+			status:      http.StatusOK,
+			header:      http.Header{},
+			varyHeaders: []string{},
+			want:        true,
+		},
+		{
+			name:        "Configured headers with whitespace",
+			status:      http.StatusOK,
+			header:      http.Header{"Vary": []string{"Cookie"}},
+			varyHeaders: []string{"  Cookie  "},
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := responseIsCacheable(tt.status, tt.header, tt.varyHeaders)
+			if got != tt.want {
+				t.Errorf("responseIsCacheable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestProxyStreamingGetFlushesFirstChunk(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
