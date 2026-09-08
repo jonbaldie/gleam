@@ -644,6 +644,36 @@ func TestBugHuntResponsePrivateIsStored(t *testing.T) {
 	}
 }
 
+func TestBugHuntResponseNoCacheIsReused(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = fmt.Fprintf(w, "no-cache-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/fresh", nil)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+	if _, found := c.Get(cacheKeyForRequest(req)); found {
+		t.Fatal("expected Cache-Control: no-cache response not to be stored")
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because Cache-Control: no-cache requires revalidation", got)
+	}
+	if first.Body.String() == second.Body.String() {
+		t.Fatalf("second response was served from cache despite Cache-Control: no-cache: %q", second.Body.String())
+	}
+}
+
 func TestBugHuntSetCookieResponseIsStored(t *testing.T) {
 	var calls atomic.Int32
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -991,6 +1021,34 @@ func TestResponseIsCacheable(t *testing.T) {
 			name:        "Cache-Control no-store",
 			status:      http.StatusOK,
 			header:      http.Header{"Cache-Control": []string{"no-store"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control no-cache",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"no-cache"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control no-cache with max-age",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"no-cache, max-age=60"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control no-cache uppercase",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"NO-CACHE"}},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "Cache-Control no-cache in comma list",
+			status:      http.StatusOK,
+			header:      http.Header{"Cache-Control": []string{"public, no-cache, max-age=60"}},
 			varyHeaders: varyConfig,
 			want:        false,
 		},
