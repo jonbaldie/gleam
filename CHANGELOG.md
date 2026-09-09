@@ -4,6 +4,16 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.1.4] — 2026-09-10
+
+### Fixed
+- Evict expired entries from SimpleCache on access so they do not accumulate indefinitely (#39, #49).
+- Preserve unannounced HTTP trailers on cached responses (#40, #51).
+- Return 304 Not Modified for cached GET when If-None-Match matches the cached ETag (#41, #52).
+
+### Changed
+- Pin the module, Docker image, and lint runtime to patched Go 1.25.13 (#42, #53).
+
 ## [v0.1.3] — 2026-09-09
 
 ### Fixed
@@ -43,3 +53,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.1]: https://github.com/jonbaldie/gleam/compare/v0.1.0...v0.1.1
 [v0.1.2]: https://github.com/jonbaldie/gleam/compare/v0.1.1...v0.1.2
 [v0.1.3]: https://github.com/jonbaldie/gleam/compare/v0.1.2...v0.1.3
+[v0.1.4]: https://github.com/jonbaldie/gleam/compare/v0.1.3...v0.1.4
