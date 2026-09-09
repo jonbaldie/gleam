@@ -133,6 +133,18 @@ func (w *cacheResponseWriter) cachedTrailer() http.Header {
 			trailers.Add(name, value)
 		}
 	}
+	for key, values := range w.ResponseWriter.Header() {
+		if !strings.HasPrefix(key, http.TrailerPrefix) {
+			continue
+		}
+		name := strings.TrimPrefix(key, http.TrailerPrefix)
+		if name == "" {
+			continue
+		}
+		for _, value := range values {
+			trailers.Add(name, value)
+		}
+	}
 	if len(trailers) == 0 {
 		return nil
 	}
