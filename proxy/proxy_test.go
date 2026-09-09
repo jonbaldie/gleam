@@ -548,6 +548,55 @@ func TestProxyCachedTrailersRemainTrailers(t *testing.T) {
 	}
 }
 
+func TestBugHuntUnannouncedTrailerIsDroppedFromCache(t *testing.T) {
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header()[http.TrailerPrefix+"X-Unannounced-Trailer"] = []string{"done"}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	first, err := http.Get(proxy.URL + "/with-unannounced-trailer")
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	_, _ = io.ReadAll(first.Body)
+	_ = first.Body.Close()
+	if got := first.Trailer.Get("X-Unannounced-Trailer"); got != "done" {
+		t.Fatalf("first response trailer = %q, want done", got)
+	}
+
+	second, err := http.Get(proxy.URL + "/with-unannounced-trailer")
+	if err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
+	_, _ = io.ReadAll(second.Body)
+	_ = second.Body.Close()
+	if got := second.Trailer.Get("X-Unannounced-Trailer"); got != "done" {
+		t.Fatalf("cached response trailer = %q, want done", got)
+	}
+	if got := originCalls.Load(); got != 1 {
+		t.Fatalf("expected one origin call for a cache hit, got %d", got)
+	}
+
+	cacheRequest := httptest.NewRequest(http.MethodGet, "/with-unannounced-trailer", nil)
+	cacheRequest.Host = strings.TrimPrefix(proxy.URL, "http://")
+	item, found := c.Get(cacheKeyForRequest(cacheRequest))
+	if !found {
+		t.Fatal("expected unannounced trailer response to be cached")
+	}
+	if _, found := item.Trailer[http.TrailerPrefix+"X-Unannounced-Trailer"]; found {
+		t.Fatalf("cached trailer retained internal prefix: %#v", item.Trailer)
+	}
+}
+
 func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Connection") != "Upgrade" || r.Header.Get("Upgrade") != "websocket" {
