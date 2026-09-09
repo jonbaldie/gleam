@@ -22,7 +22,7 @@ jobs:
     - name: Run linter
       run: |
         ./scripts/install-golangci-lint.sh
-        GOTOOLCHAIN=go1.24.10 ./bin/golangci-lint run --build-tags=gms_pure_go ./...
+        GOTOOLCHAIN=go1.25.13 ./bin/golangci-lint run --build-tags=gms_pure_go ./...
 
     - name: Build Docker image
       run: docker build -t jonbaldie/gleam .

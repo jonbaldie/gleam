@@ -2,7 +2,7 @@
 
 set -eu
 
-VERSION="1.64.8"
+VERSION="2.13.2"
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
