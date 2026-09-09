@@ -286,6 +286,181 @@ func TestProxyCopiesAllResponseHeadersOnCacheHit(t *testing.T) {
 	}
 }
 
+func TestBugHuntConditionalGETDoesNotProduceNotModifiedResponse(t *testing.T) {
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Set("ETag", `"version-1"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected first response status %d, got %d", http.StatusOK, first.Code)
+	}
+	if first.Body.String() != "body" {
+		t.Fatalf("expected first body %q, got %q", "body", first.Body.String())
+	}
+
+	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	conditional.Header.Set("If-None-Match", `"version-1"`)
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, conditional)
+
+	if second.Code != http.StatusNotModified {
+		t.Fatalf("expected conditional cache hit status %d, got %d", http.StatusNotModified, second.Code)
+	}
+	if body := second.Body.String(); body != "" {
+		t.Fatalf("expected empty 304 body, got %q", body)
+	}
+	if got := originCalls.Load(); got != 1 {
+		t.Fatalf("expected one origin call after conditional cache hit, got %d", got)
+	}
+	if got := second.Header().Get("ETag"); got != `"version-1"` {
+		t.Fatalf("expected 304 to keep cached ETag, got %q", got)
+	}
+}
+
+func TestProxyConditionalGETOnCacheHit(t *testing.T) {
+	tests := []struct {
+		name        string
+		etag        string
+		ifNoneMatch string
+		wantStatus  int
+		wantBody    string
+	}{
+		{
+			name:        "weak cached etag matches strong validator",
+			etag:        `W/"xyz"`,
+			ifNoneMatch: `"xyz"`,
+			wantStatus:  http.StatusNotModified,
+			wantBody:    "",
+		},
+		{
+			name:        "strong cached etag matches weak validator",
+			etag:        `"xyz"`,
+			ifNoneMatch: `W/"xyz"`,
+			wantStatus:  http.StatusNotModified,
+			wantBody:    "",
+		},
+		{
+			name:        "weak cached etag matches weak validator",
+			etag:        `W/"xyz"`,
+			ifNoneMatch: `W/"xyz"`,
+			wantStatus:  http.StatusNotModified,
+			wantBody:    "",
+		},
+		{
+			name:        "star matches any cached etag",
+			etag:        `"version-1"`,
+			ifNoneMatch: "*",
+			wantStatus:  http.StatusNotModified,
+			wantBody:    "",
+		},
+		{
+			name:        "comma-separated list matches cached etag",
+			etag:        `"version-1"`,
+			ifNoneMatch: `"other", "version-1", "also"`,
+			wantStatus:  http.StatusNotModified,
+			wantBody:    "",
+		},
+		{
+			name:        "non-matching validator returns full body",
+			etag:        `"version-1"`,
+			ifNoneMatch: `"version-2"`,
+			wantStatus:  http.StatusOK,
+			wantBody:    "body",
+		},
+		{
+			name:        "no cached etag returns full body",
+			etag:        "",
+			ifNoneMatch: `"version-1"`,
+			wantStatus:  http.StatusOK,
+			wantBody:    "body",
+		},
+		{
+			name:        "star does not match missing etag",
+			etag:        "",
+			ifNoneMatch: "*",
+			wantStatus:  http.StatusOK,
+			wantBody:    "body",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var originCalls atomic.Int32
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				originCalls.Add(1)
+				if tt.etag != "" {
+					w.Header().Set("ETag", tt.etag)
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("body"))
+			}))
+			defer origin.Close()
+
+			handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
+
+			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
+			conditional.Header.Set("If-None-Match", tt.ifNoneMatch)
+			second := httptest.NewRecorder()
+			handler.ServeHTTP(second, conditional)
+
+			if second.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", second.Code, tt.wantStatus)
+			}
+			if body := second.Body.String(); body != tt.wantBody {
+				t.Fatalf("body = %q, want %q", body, tt.wantBody)
+			}
+			if got := originCalls.Load(); got != 1 {
+				t.Fatalf("origin calls = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestIfNoneMatchMatches(t *testing.T) {
+	tests := []struct {
+		name        string
+		ifNoneMatch []string
+		etag        string
+		want        bool
+	}{
+		{name: "empty validators", ifNoneMatch: nil, etag: `"a"`, want: false},
+		{name: "empty etag", ifNoneMatch: []string{`"a"`}, etag: "", want: false},
+		{name: "exact strong match", ifNoneMatch: []string{`"a"`}, etag: `"a"`, want: true},
+		{name: "weak comparison ignores weakness", ifNoneMatch: []string{`W/"a"`}, etag: `"a"`, want: true},
+		{name: "quoted comma stays one tag", ifNoneMatch: []string{`"a,b"`}, etag: `"a,b"`, want: true},
+		{name: "quoted comma does not split", ifNoneMatch: []string{`"a,b"`}, etag: `"a"`, want: false},
+		{name: "multiple header values", ifNoneMatch: []string{`"x"`, `"a"`}, etag: `"a"`, want: true},
+		{name: "star", ifNoneMatch: []string{"*"}, etag: `"a"`, want: true},
+		{name: "star without etag", ifNoneMatch: []string{"*"}, etag: "", want: false},
+		{name: "malformed etag", ifNoneMatch: []string{`"a"`}, etag: "a", want: false},
+		{name: "mismatch", ifNoneMatch: []string{`"b"`}, etag: `"a"`, want: false},
+		{name: "surrounding whitespace on etag", ifNoneMatch: []string{`"a"`}, etag: `  "a"  `, want: true},
+		{name: "star after another tag", ifNoneMatch: []string{`"x", *`}, etag: `"a"`, want: true},
+		{name: "star with trailing comma", ifNoneMatch: []string{"*,"}, etag: `"a"`, want: true},
+		{name: "star with trailing space", ifNoneMatch: []string{"* "}, etag: `"a"`, want: true},
+		{name: "skips malformed then matches", ifNoneMatch: []string{`foo, "a"`}, etag: `"a"`, want: true},
+		{name: "etag with extra tokens", ifNoneMatch: []string{`"a"`}, etag: `"a" extra`, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ifNoneMatchMatches(tt.ifNoneMatch, tt.etag); got != tt.want {
+				t.Fatalf("ifNoneMatchMatches(%q, %q) = %v, want %v", tt.ifNoneMatch, tt.etag, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestCacheKeyForRequestIsDeterministicWithMultipleHeaders kills gleam.go:268
 // (statement/remove drops sort.Strings(headerNames), making the hash dependent on
 // non-deterministic map iteration order).

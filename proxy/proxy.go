@@ -36,6 +36,10 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 			cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 			if cachedItem, found := c.Get(cacheKey); found {
+				if ifNoneMatchMatches(r.Header.Values("If-None-Match"), cachedItem.Header.Get("ETag")) {
+					writeCachedNotModified(w, cachedItem)
+					return
+				}
 				writeCachedItem(w, cachedItem)
 				return
 			}
@@ -152,16 +156,8 @@ func (w *cacheResponseWriter) cachedTrailer() http.Header {
 }
 
 func writeCachedItem(w http.ResponseWriter, item *cache.CacheItem) {
-	for key, values := range item.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-	for name := range item.Trailer {
-		if !headerContainsToken(w.Header().Values("Trailer"), name) {
-			w.Header().Add("Trailer", name)
-		}
-	}
+	copyCachedHeaders(w, item)
+	announceCachedTrailers(w, item)
 
 	w.WriteHeader(item.Status)
 	_, _ = w.Write(item.Content)
@@ -171,6 +167,126 @@ func writeCachedItem(w http.ResponseWriter, item *cache.CacheItem) {
 			w.Header().Add(key, value)
 		}
 	}
+}
+
+func writeCachedNotModified(w http.ResponseWriter, item *cache.CacheItem) {
+	copyCachedHeaders(w, item)
+	w.WriteHeader(http.StatusNotModified)
+}
+
+func copyCachedHeaders(w http.ResponseWriter, item *cache.CacheItem) {
+	for key, values := range item.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+}
+
+func announceCachedTrailers(w http.ResponseWriter, item *cache.CacheItem) {
+	for name := range item.Trailer {
+		if !headerContainsToken(w.Header().Values("Trailer"), name) {
+			w.Header().Add("Trailer", name)
+		}
+	}
+}
+
+type entityTag struct {
+	opaque string
+}
+
+func ifNoneMatchMatches(ifNoneMatch []string, etag string) bool {
+	if len(ifNoneMatch) == 0 {
+		return false
+	}
+	cached, ok := parseEntityTag(etag)
+	if !ok {
+		return false
+	}
+	for _, value := range ifNoneMatch {
+		star, tags := parseIfNoneMatchValue(value)
+		if star {
+			return true
+		}
+		for _, tag := range tags {
+			if tag.opaque == cached.opaque {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseEntityTag(raw string) (entityTag, bool) {
+	raw = strings.TrimSpace(raw)
+	tag, n, ok := scanEntityTag(raw)
+	if !ok || strings.TrimSpace(raw[n:]) != "" {
+		return entityTag{}, false
+	}
+	return tag, true
+}
+
+func parseIfNoneMatchValue(value string) (star bool, tags []entityTag) {
+	rest := strings.TrimSpace(value)
+	for rest != "" {
+		rest = strings.TrimLeft(rest, " \t")
+		if rest == "" {
+			break
+		}
+		if isStarToken(rest) {
+			return true, tags
+		}
+		tag, n, ok := scanEntityTag(rest)
+		if !ok {
+			rest = skipToNextListItem(rest)
+			continue
+		}
+		tags = append(tags, tag)
+		rest = consumeListSeparator(rest[n:])
+	}
+	return false, tags
+}
+
+func isStarToken(s string) bool {
+	if s[0] != '*' {
+		return false
+	}
+	after := strings.TrimLeft(s[1:], " \t")
+	return after == "" || after[0] == ','
+}
+
+func skipToNextListItem(s string) string {
+	comma := strings.IndexByte(s, ',')
+	if comma < 0 {
+		return ""
+	}
+	return s[comma+1:]
+}
+
+func consumeListSeparator(s string) string {
+	s = strings.TrimLeft(s, " \t")
+	if s == "" || s[0] != ',' {
+		return ""
+	}
+	return s[1:]
+}
+
+func scanEntityTag(s string) (entityTag, int, bool) {
+	i := 0
+	end := len(s)
+	if end >= 2 && s[0] == 'W' && s[1] == '/' {
+		i = 2
+	}
+	if i >= end || s[i] != '"' {
+		return entityTag{}, 0, false
+	}
+	j := i + 1
+	for j < end && s[j] != '"' {
+		j++
+	}
+	if j >= end {
+		return entityTag{}, 0, false
+	}
+	return entityTag{opaque: s[i : j+1]}, j + 1, true
 }
 
 func isUpgradeRequest(r *http.Request) bool {
