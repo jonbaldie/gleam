@@ -27,38 +27,49 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			// Request no-store forbids both serving from and storing in
-			// the cache (RFC 9111 section 5.2.1.5), so skip it entirely.
-			noStore := requestForbidsStorage(r)
-			if noStore || isUpgradeRequest(r) || requestRequiresRevalidation(r) || requestHasRange(r) {
-				p.ServeHTTP(w, r)
-				return
-			}
-
-			cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
-			if cachedItem, found := c.Get(cacheKey); found {
-				serveCachedItem(w, r, cachedItem)
-				return
-			}
-
-			crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
-			p.ServeHTTP(crw, r)
-
-			if responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
-				if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl); shouldStore {
-					c.Set(cacheKey, cache.CacheItem{
-						Content: crw.buf.Bytes(),
-						Header:  crw.cachedHeader,
-						Trailer: crw.cachedTrailer(),
-						Status:  crw.status,
-					}, responseTTL)
-				}
-			}
+			serveGet(p, c, w, r, varyHeaders, ttl)
 			return
 		}
 
 		serveNonGet(p, c, w, r)
 	})
+}
+
+// serveGet answers a GET from the cache when possible, and otherwise forwards
+// it to the origin, storing the response when it is both storable and copied
+// through to the client in full.
+func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
+	// Request no-store forbids both serving from and storing in
+	// the cache (RFC 9111 section 5.2.1.5), so skip it entirely.
+	if requestForbidsStorage(r) || isUpgradeRequest(r) || requestRequiresRevalidation(r) || requestHasRange(r) {
+		p.ServeHTTP(w, r)
+		return
+	}
+
+	cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
+	if cachedItem, found := c.Get(cacheKey); found {
+		serveCachedItem(w, r, cachedItem)
+		return
+	}
+
+	crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
+	p.ServeHTTP(crw, r)
+	// Reaching here means the reverse proxy returned normally; an abnormal
+	// unwind (http.ErrAbortHandler on a copy error) skips this, and so skips
+	// storage too.
+	crw.proxyReturned = true
+
+	if !crw.copyComplete() || !responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
+		return
+	}
+	if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl); shouldStore {
+		c.Set(cacheKey, cache.CacheItem{
+			Content: crw.buf.Bytes(),
+			Header:  crw.cachedHeader,
+			Trailer: crw.cachedTrailer(),
+			Status:  crw.status,
+		}, responseTTL)
+	}
 }
 
 // serveNonGet forwards a non-GET request to the origin and, when the method
@@ -148,6 +159,17 @@ type cacheResponseWriter struct {
 	buf          *bytes.Buffer
 	status       int
 	cachedHeader http.Header
+	// proxyReturned records that the reverse proxy finished serving without
+	// unwinding, and writeErr the failure of any forwarded body write. A
+	// response is only a complete representation when both agree the copy ran
+	// to completion; storing anything less would poison the cache with a
+	// truncated body (RFC 9111 section 3).
+	proxyReturned bool
+	writeErr      error
+}
+
+func (w *cacheResponseWriter) copyComplete() bool {
+	return w.proxyReturned && w.writeErr == nil
 }
 
 func (w *cacheResponseWriter) WriteHeader(status int) {
@@ -161,7 +183,11 @@ func (w *cacheResponseWriter) Write(b []byte) (int, error) {
 		w.WriteHeader(w.status)
 	}
 	w.buf.Write(b)
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	if err != nil && w.writeErr == nil {
+		w.writeErr = err
+	}
+	return n, err
 }
 
 func (w *cacheResponseWriter) Header() http.Header {
