@@ -29,4 +29,9 @@ type CacheItem struct {
 	Trailer    http.Header
 	Status     int
 	Expiration time.Time
+	// StoredAt is the response time of the stored response: the moment this
+	// cache received it from the origin. Reuse of the entry reports an Age
+	// measured from it (RFC 9111 section 4.2.3). A zero value means the
+	// response time is unknown, as for entries stored by earlier versions.
+	StoredAt time.Time
 }
