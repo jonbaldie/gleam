@@ -351,3 +351,42 @@ func TestSimpleCacheLiveEntriesSurviveExpiredGet(t *testing.T) {
 		t.Errorf("expected value, got %s", string(item.Content))
 	}
 }
+
+func TestSimpleCacheInvalidatePrefix(t *testing.T) {
+	c := NewSimpleCache()
+
+	items := []string{
+		"example.com#/resource",
+		"example.com#/resource#h=abc123",
+		"example.com#/other",
+		"example.com#/resource2",
+	}
+	for _, key := range items {
+		c.Set(key, cache.CacheItem{Content: []byte(key), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
+	}
+
+	c.InvalidatePrefix("example.com#/resource")
+
+	if _, found := c.Get("example.com#/resource"); found {
+		t.Error("expected exact key to be invalidated")
+	}
+	if _, found := c.Get("example.com#/resource#h=abc123"); found {
+		t.Error("expected vary-variant key to be invalidated")
+	}
+	for _, key := range []string{"example.com#/other", "example.com#/resource2"} {
+		if _, found := c.Get(key); !found {
+			t.Errorf("expected unrelated key %q to survive invalidation", key)
+		}
+	}
+}
+
+func TestSimpleCacheInvalidatePrefixWithNoMatchingKeys(t *testing.T) {
+	c := NewSimpleCache()
+	c.Set("example.com#/resource", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
+
+	c.InvalidatePrefix("other.com#/resource")
+
+	if _, found := c.Get("example.com#/resource"); !found {
+		t.Error("expected key to survive invalidation of an unrelated prefix")
+	}
+}

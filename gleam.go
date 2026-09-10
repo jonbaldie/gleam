@@ -55,6 +55,19 @@ func (c *SimpleCache) Get(key string) (*cache.CacheItem, bool) {
 	return item, true
 }
 
+// InvalidatePrefix removes every entry whose key matches the given host+URI
+// base key, including vary-variant entries derived from it.
+func (c *SimpleCache) InvalidatePrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for key := range c.store {
+		if cache.MatchesPrefix(key, prefix) {
+			delete(c.store, key)
+		}
+	}
+}
+
 // NewSimpleCache initializes and returns a new SimpleCache
 func NewSimpleCache() *SimpleCache {
 	return &SimpleCache{
@@ -112,6 +125,38 @@ func (r *RedisCache) Get(key string) (*cache.CacheItem, bool) {
 	}
 
 	return cacheItem, true
+}
+
+// InvalidatePrefix removes every entry whose key matches the given host+URI
+// base key, including vary-variant entries derived from it. Redis keys embed
+// the vary-header hash, so the keyspace is enumerated and filtered
+// client-side rather than matched by a glob pattern.
+func (r *RedisCache) InvalidatePrefix(prefix string) {
+	var toDelete []string
+	var cursor uint64
+	for {
+		keys, next, err := r.client.Scan(ctx, cursor, "", 100).Result()
+		if err != nil {
+			log.Printf("failed to enumerate cache keys to invalidate %q: %v", prefix, err)
+			return
+		}
+		for _, key := range keys {
+			if cache.MatchesPrefix(key, prefix) {
+				toDelete = append(toDelete, key)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if len(toDelete) == 0 {
+		return
+	}
+	if err := r.client.Del(ctx, toDelete...).Err(); err != nil {
+		log.Printf("failed to invalidate %d cache entries for %q: %v", len(toDelete), prefix, err)
+	}
 }
 
 // Config holds all configurable options

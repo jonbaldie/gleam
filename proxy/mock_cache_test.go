@@ -36,6 +36,17 @@ func (c *mockCache) Get(key string) (*cache.CacheItem, bool) {
 	return item, true
 }
 
+func (c *mockCache) InvalidatePrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for key := range c.store {
+		if cache.MatchesPrefix(key, prefix) {
+			delete(c.store, key)
+		}
+	}
+}
+
 func newMockCache() *mockCache {
 	return &mockCache{
 		store: make(map[string]*cache.CacheItem),
