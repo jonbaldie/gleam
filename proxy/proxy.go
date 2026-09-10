@@ -57,13 +57,20 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 			return
 		}
 
-		srw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
-		p.ServeHTTP(srw, r)
-
-		if isUnsafeMethod(r.Method) && isNonErrorResponse(srw.status) {
-			c.InvalidatePrefix(cacheBaseKey(r))
-		}
+		serveNonGet(p, c, w, r)
 	})
+}
+
+// serveNonGet forwards a non-GET request to the origin and, when the method
+// is unsafe and the response is non-error, invalidates every stored entry
+// for the target URI (RFC 9111 section 4.4).
+func serveNonGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request) {
+	srw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	p.ServeHTTP(srw, r)
+
+	if isUnsafeMethod(r.Method) && isNonErrorResponse(srw.status) {
+		c.InvalidatePrefix(cacheBaseKey(r))
+	}
 }
 
 var defaultVaryHeaders = []string{"Authorization", "Cookie"}
