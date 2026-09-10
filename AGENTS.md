@@ -24,6 +24,8 @@ Single-context layout — root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/d
 
 _Add your build and test commands here_
 
+For mutation tests, set `GOMAXPROCS=1` and pass `--workers=1` to `mutago` to keep the host responsive. This applies to local runs only; see `.github/workflows/mutation.yml` for the pinned Mutago version and its coverage, MSI, logger, timeout, and package arguments.
+
 ```bash
 # Example:
 # npm install
