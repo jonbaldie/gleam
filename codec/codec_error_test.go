@@ -112,12 +112,21 @@ func TestDecode_Truncated(t *testing.T) {
 	}
 	encoded, _ := codec.Encode(item)
 	decoded, _ := base64.StdEncoding.DecodeString(string(encoded))
-	oldFormatLen := len(decoded) - 4
+
+	// The trailing StoredAt and Trailer fields are optional, so payloads cut
+	// back to either boundary are valid entries in an earlier format rather
+	// than truncations.
+	storedAtBytes, err := item.StoredAt.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal StoredAt: %v", err)
+	}
+	withoutStoredAt := len(decoded) - (4 + len(storedAtBytes))
+	withoutTrailer := withoutStoredAt - 4
 
 	for i := 1; i < len(decoded); i++ {
 		trunc := base64.StdEncoding.EncodeToString(decoded[:i])
 		_, err := codec.Decode([]byte(trunc))
-		if err == nil && i != oldFormatLen {
+		if err == nil && i != withoutStoredAt && i != withoutTrailer {
 			t.Fatalf("Expected error for truncated payload at length %d", i)
 		}
 	}

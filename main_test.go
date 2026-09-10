@@ -390,3 +390,19 @@ func TestSimpleCacheInvalidatePrefixWithNoMatchingKeys(t *testing.T) {
 		t.Error("expected key to survive invalidation of an unrelated prefix")
 	}
 }
+
+// SimpleCache must keep the response time of a stored entry so that cache
+// hits can report an accurate Age.
+func TestSimpleCachePreservesStoredAt(t *testing.T) {
+	storedAt := time.Now().Add(-time.Minute)
+	c := NewSimpleCache()
+	c.Set("key", cache.CacheItem{Content: []byte("body"), Status: 200, StoredAt: storedAt}, time.Minute)
+
+	item, found := c.Get("key")
+	if !found {
+		t.Fatal("expected stored entry to be found")
+	}
+	if !item.StoredAt.Equal(storedAt) {
+		t.Fatalf("expected StoredAt %v, got %v", storedAt, item.StoredAt)
+	}
+}

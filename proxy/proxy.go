@@ -64,10 +64,11 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	}
 	if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl); shouldStore {
 		c.Set(cacheKey, cache.CacheItem{
-			Content: crw.buf.Bytes(),
-			Header:  crw.cachedHeader,
-			Trailer: crw.cachedTrailer(),
-			Status:  crw.status,
+			Content:  crw.buf.Bytes(),
+			Header:   crw.cachedHeader,
+			Trailer:  crw.cachedTrailer(),
+			Status:   crw.status,
+			StoredAt: time.Now(),
 		}, responseTTL)
 	}
 }
@@ -276,10 +277,76 @@ func writeCachedNotModified(w http.ResponseWriter, item *cache.CacheItem) {
 
 func copyCachedHeaders(w http.ResponseWriter, item *cache.CacheItem) {
 	for key, values := range item.Header {
+		if http.CanonicalHeaderKey(key) == "Age" {
+			continue
+		}
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
+	// Reuse without revalidation must report how long the response has been
+	// held here, rather than replaying the origin's Age (RFC 9111 section 4.2.3).
+	w.Header().Set("Age", strconv.FormatUint(currentAgeSeconds(item, time.Now()), 10))
+}
+
+// currentAgeSeconds is RFC 9111 section 4.2.3's current_age for a stored
+// response: the age the origin's copy already had when this cache received it,
+// plus the time it has been resident here since.
+func currentAgeSeconds(item *cache.CacheItem, now time.Time) uint64 {
+	correctedInitialAge := correctedInitialAge(item)
+
+	var residentTime time.Duration
+	if !item.StoredAt.IsZero() {
+		residentTime = now.Sub(item.StoredAt)
+	}
+
+	return nonNegativeSeconds(correctedInitialAge + residentTime)
+}
+
+// correctedInitialAge is the greater of the age the origin claimed and the age
+// apparent from the response's Date, measured at the moment this cache
+// received the response.
+func correctedInitialAge(item *cache.CacheItem) time.Duration {
+	var apparentAge time.Duration
+	if date, ok := parseHTTPDate(item.Header.Get("Date")); ok && !item.StoredAt.IsZero() {
+		apparentAge = item.StoredAt.Sub(date)
+	}
+	if apparentAge < 0 {
+		apparentAge = 0
+	}
+
+	ageValue, ok := parseAgeValue(item.Header.Get("Age"))
+	if ok && ageValue > apparentAge {
+		return ageValue
+	}
+	return apparentAge
+}
+
+// parseAgeValue reads an Age field value: a non-negative number of seconds.
+// A value that does not parse is ignored (RFC 9111 section 5.1).
+func parseAgeValue(raw string) (time.Duration, bool) {
+	seconds, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return saturatingSeconds(seconds), true
+}
+
+// saturatingSeconds converts a seconds count to a Duration, pinning values too
+// large to represent at the maximum rather than overflowing.
+func saturatingSeconds(seconds uint64) time.Duration {
+	const maxDuration = time.Duration(1<<63 - 1)
+	if seconds > uint64(maxDuration/time.Second) {
+		return maxDuration
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func nonNegativeSeconds(d time.Duration) uint64 {
+	if d <= 0 {
+		return 0
+	}
+	return uint64(d / time.Second)
 }
 
 func announceCachedTrailers(w http.ResponseWriter, item *cache.CacheItem) {

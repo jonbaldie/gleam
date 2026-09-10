@@ -80,12 +80,12 @@ func encodeHeaders(w io.Writer, header http.Header) error {
 	return nil
 }
 
-func encodeExpiration(w io.Writer, expiration time.Time) error {
-	expirationBytes, err := expiration.MarshalBinary()
+func encodeTime(w io.Writer, t time.Time) error {
+	timeBytes, err := t.MarshalBinary()
 	if err != nil {
 		return err
 	}
-	return writeSized(w, expirationBytes)
+	return writeSized(w, timeBytes)
 }
 
 func validateStatus(status uint32) error {
@@ -110,10 +110,15 @@ func encodeTo(w io.Writer, item cache.CacheItem) error {
 	if err := encodeHeaders(w, item.Header); err != nil {
 		return err
 	}
-	if err := encodeExpiration(w, item.Expiration); err != nil {
+	if err := encodeTime(w, item.Expiration); err != nil {
 		return err
 	}
-	return encodeHeaders(w, item.Trailer)
+	if err := encodeHeaders(w, item.Trailer); err != nil {
+		return err
+	}
+	// StoredAt trails the older format's fields, so entries written before it
+	// existed still decode — they simply carry no response time.
+	return encodeTime(w, item.StoredAt)
 }
 
 // readCount reads a uint32 length/count prefix and rejects any value that
@@ -191,16 +196,16 @@ func decodeHeaders(r *bytes.Reader) (http.Header, error) {
 	return header, nil
 }
 
-func decodeExpiration(r *bytes.Reader) (time.Time, error) {
-	expirationBytes, err := readSized(r)
+func decodeTime(r *bytes.Reader) (time.Time, error) {
+	timeBytes, err := readSized(r)
 	if err != nil {
 		return time.Time{}, err
 	}
-	var expiration time.Time
-	if err := expiration.UnmarshalBinary(expirationBytes); err != nil {
+	var t time.Time
+	if err := t.UnmarshalBinary(timeBytes); err != nil {
 		return time.Time{}, err
 	}
-	return expiration, nil
+	return t, nil
 }
 
 func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
@@ -221,11 +226,16 @@ func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	if item.Header, err = decodeHeaders(buf); err != nil {
 		return nil, err
 	}
-	if item.Expiration, err = decodeExpiration(buf); err != nil {
+	if item.Expiration, err = decodeTime(buf); err != nil {
 		return nil, err
 	}
 	if buf.Len() > 0 {
 		if item.Trailer, err = decodeHeaders(buf); err != nil {
+			return nil, err
+		}
+	}
+	if buf.Len() > 0 {
+		if item.StoredAt, err = decodeTime(buf); err != nil {
 			return nil, err
 		}
 	}

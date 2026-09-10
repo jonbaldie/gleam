@@ -71,3 +71,27 @@ func TestBinaryCodec_RoundTripWithTrailers(t *testing.T) {
 		t.Fatalf("trailer mismatch: got %q, want done", got)
 	}
 }
+
+func TestBinaryCodecRoundTripsStoredAt(t *testing.T) {
+	storedAt := time.Now().UTC().Truncate(time.Second)
+	c := &BinaryCodec{}
+
+	encoded, err := c.Encode(cache.CacheItem{
+		Content:    []byte("body"),
+		Status:     200,
+		Header:     http.Header{"Date": []string{"Thu, 10 Sep 2026 03:58:45 GMT"}},
+		Expiration: storedAt.Add(time.Minute),
+		StoredAt:   storedAt,
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	decoded, err := c.Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !decoded.StoredAt.Equal(storedAt) {
+		t.Fatalf("expected StoredAt %v, got %v", storedAt, decoded.StoredAt)
+	}
+}

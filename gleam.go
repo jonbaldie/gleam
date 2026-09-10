@@ -36,6 +36,7 @@ func (c *SimpleCache) Set(key string, item cache.CacheItem, ttl time.Duration) {
 		Trailer:    cloneHeader(item.Trailer),
 		Status:     item.Status,
 		Expiration: time.Now().Add(ttl),
+		StoredAt:   item.StoredAt,
 	}
 }
 
