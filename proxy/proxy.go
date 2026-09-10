@@ -57,7 +57,12 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 			return
 		}
 
-		p.ServeHTTP(w, r)
+		srw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		p.ServeHTTP(srw, r)
+
+		if isUnsafeMethod(r.Method) && isNonErrorResponse(srw.status) {
+			c.InvalidatePrefix(cacheBaseKey(r))
+		}
 	})
 }
 
@@ -84,6 +89,51 @@ func ParseVaryHeaders(raw string) []string {
 		headers = append(headers, name)
 	}
 	return headers
+}
+
+// statusResponseWriter observes the origin's response status while streaming
+// the response through untouched, so the non-GET path can invalidate the
+// cache without buffering the body. Upgrade and flush paths stay live.
+type statusResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not implement http.Hijacker")
+	}
+	return hijacker.Hijack()
+}
+
+func (w *statusResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// RFC 9110 section 9.2.1: GET, HEAD, OPTIONS, and TRACE are safe; other
+// methods, including those whose safety is unknown, are unsafe (RFC 9111
+// section 4.4).
+func isUnsafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return false
+	default:
+		return true
+	}
+}
+
+// A non-error response — 2xx or 3xx — to an unsafe request invalidates stored
+// responses for the target URI (RFC 9111 section 4.4).
+func isNonErrorResponse(status int) bool {
+	return status >= http.StatusOK && status < http.StatusBadRequest
 }
 
 type cacheResponseWriter struct {
@@ -500,6 +550,12 @@ func cloneHeader(header http.Header) http.Header {
 	return clone
 }
 
+// cacheBaseKey is the host+URI portion shared by a URI's exact cache key and
+// every vary-variant key derived from it.
+func cacheBaseKey(r *http.Request) string {
+	return r.Host + "#" + r.URL.String()
+}
+
 // Include configured request headers in the cache key so one caller's GET
 // response is not served to another caller with different cache-relevant
 // request metadata.
@@ -508,7 +564,7 @@ func cacheKeyForRequest(r *http.Request) string {
 }
 
 func cacheKeyForRequestWithVaryHeaders(r *http.Request, varyHeaders []string) string {
-	base := r.Host + "#" + r.URL.String()
+	base := cacheBaseKey(r)
 	if len(r.Header) == 0 || len(varyHeaders) == 0 {
 		return base
 	}
