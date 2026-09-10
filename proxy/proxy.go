@@ -198,19 +198,22 @@ func ifNoneMatchMatches(ifNoneMatch []string, etag string) bool {
 	if len(ifNoneMatch) == 0 {
 		return false
 	}
+	var tags []entityTag
+	for _, value := range ifNoneMatch {
+		star, valueTags := parseIfNoneMatchValue(value)
+		if star {
+			return true
+		}
+		tags = append(tags, valueTags...)
+	}
+
 	cached, ok := parseEntityTag(etag)
 	if !ok {
 		return false
 	}
-	for _, value := range ifNoneMatch {
-		star, tags := parseIfNoneMatchValue(value)
-		if star {
+	for _, tag := range tags {
+		if tag.opaque == cached.opaque {
 			return true
-		}
-		for _, tag := range tags {
-			if tag.opaque == cached.opaque {
-				return true
-			}
 		}
 	}
 	return false

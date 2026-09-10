@@ -385,11 +385,11 @@ func TestProxyConditionalGETOnCacheHit(t *testing.T) {
 			wantBody:    "body",
 		},
 		{
-			name:        "star does not match missing etag",
+			name:        "star matches missing etag",
 			etag:        "",
 			ifNoneMatch: "*",
-			wantStatus:  http.StatusOK,
-			wantBody:    "body",
+			wantStatus:  http.StatusNotModified,
+			wantBody:    "",
 		},
 	}
 
@@ -442,7 +442,7 @@ func TestIfNoneMatchMatches(t *testing.T) {
 		{name: "quoted comma does not split", ifNoneMatch: []string{`"a,b"`}, etag: `"a"`, want: false},
 		{name: "multiple header values", ifNoneMatch: []string{`"x"`, `"a"`}, etag: `"a"`, want: true},
 		{name: "star", ifNoneMatch: []string{"*"}, etag: `"a"`, want: true},
-		{name: "star without etag", ifNoneMatch: []string{"*"}, etag: "", want: false},
+		{name: "star without etag", ifNoneMatch: []string{"*"}, etag: "", want: true},
 		{name: "malformed etag", ifNoneMatch: []string{`"a"`}, etag: "a", want: false},
 		{name: "mismatch", ifNoneMatch: []string{`"b"`}, etag: `"a"`, want: false},
 		{name: "surrounding whitespace on etag", ifNoneMatch: []string{`"a"`}, etag: `  "a"  `, want: true},
