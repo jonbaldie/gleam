@@ -36,11 +36,7 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 			cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 			if cachedItem, found := c.Get(cacheKey); found {
-				if ifNoneMatchMatches(r.Header.Values("If-None-Match"), cachedItem.Header.Get("ETag")) {
-					writeCachedNotModified(w, cachedItem)
-					return
-				}
-				writeCachedItem(w, cachedItem)
+				serveCachedItem(w, r, cachedItem)
 				return
 			}
 
@@ -155,6 +151,24 @@ func (w *cacheResponseWriter) cachedTrailer() http.Header {
 	return trailers
 }
 
+// serveCachedItem answers a GET from a cache entry, evaluating the request's
+// conditional validators against the stored representation and responding 304
+// when they are satisfied.
+func serveCachedItem(w http.ResponseWriter, r *http.Request, item *cache.CacheItem) {
+	// RFC 9110 section 13.2.2: If-None-Match, when present, takes precedence
+	// and If-Modified-Since is ignored.
+	if len(r.Header.Values("If-None-Match")) > 0 {
+		if ifNoneMatchMatches(r.Header.Values("If-None-Match"), item.Header.Get("ETag")) {
+			writeCachedNotModified(w, item)
+			return
+		}
+	} else if ifModifiedSinceSatisfied(r.Header.Values("If-Modified-Since"), item.Header.Get("Last-Modified")) {
+		writeCachedNotModified(w, item)
+		return
+	}
+	writeCachedItem(w, item)
+}
+
 func writeCachedItem(w http.ResponseWriter, item *cache.CacheItem) {
 	copyCachedHeaders(w, item)
 	announceCachedTrailers(w, item)
@@ -217,6 +231,39 @@ func ifNoneMatchMatches(ifNoneMatch []string, etag string) bool {
 		}
 	}
 	return false
+}
+
+// ifModifiedSinceSatisfied reports whether a stored representation with the
+// given Last-Modified date has not been modified since the request's
+// If-Modified-Since date, i.e. whether it can be answered with 304 locally.
+// A condition that is absent, or whose date cannot be parsed as an HTTP date,
+// is ignored rather than treated as a match (RFC 9110 section 13.1.3).
+func ifModifiedSinceSatisfied(ifModifiedSince []string, lastModified string) bool {
+	if len(ifModifiedSince) == 0 {
+		return false
+	}
+	stored, ok := parseHTTPDate(lastModified)
+	if !ok {
+		return false
+	}
+	for _, value := range ifModifiedSince {
+		condition, ok := parseHTTPDate(value)
+		if !ok {
+			continue
+		}
+		if !stored.After(condition) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseHTTPDate(raw string) (time.Time, bool) {
+	t, err := http.ParseTime(strings.TrimSpace(raw))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 func parseEntityTag(raw string) (entityTag, bool) {
