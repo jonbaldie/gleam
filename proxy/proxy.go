@@ -39,9 +39,7 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 // it to the origin, storing the response when it is both storable and copied
 // through to the client in full.
 func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
-	// Request no-store forbids both serving from and storing in
-	// the cache (RFC 9111 section 5.2.1.5), so skip it entirely.
-	if requestForbidsStorage(r) || isUpgradeRequest(r) || requestRequiresRevalidation(r) || requestHasRange(r) {
+	if requestBypassesCache(r) {
 		p.ServeHTTP(w, r)
 		return
 	}
@@ -52,11 +50,9 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	authenticated := requestHasAuthorization(r)
 
 	cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
-	if cachedItem, found := c.Get(cacheKey); found {
-		if !authenticated || responsePermitsSharedCacheReuseOfAuthorized(cachedItem.Header) {
-			serveCachedItem(w, r, cachedItem)
-			return
-		}
+	if cachedItem, found := reusableCachedItem(c, cacheKey, authenticated); found {
+		serveCachedItem(w, r, cachedItem)
+		return
 	}
 
 	crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
@@ -66,22 +62,53 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	// storage too.
 	crw.proxyReturned = true
 
+	storeResponse(c, cacheKey, crw, varyHeaders, ttl, authenticated)
+}
+
+// requestBypassesCache reports whether a GET must go straight to the origin
+// without either a cache lookup or storage. Request no-store forbids both
+// (RFC 9111 section 5.2.1.5); no-cache demands revalidation this cache does
+// not perform; upgrades and ranges are not interchangeable with a full GET.
+func requestBypassesCache(r *http.Request) bool {
+	return requestForbidsStorage(r) || isUpgradeRequest(r) ||
+		requestRequiresRevalidation(r) || requestHasRange(r)
+}
+
+// reusableCachedItem returns the stored entry for a key when this cache may
+// answer the request from it.
+func reusableCachedItem(c cache.Cache, cacheKey string, authenticated bool) (*cache.CacheItem, bool) {
+	cachedItem, found := c.Get(cacheKey)
+	if !found {
+		return nil, false
+	}
+	if authenticated && !responsePermitsSharedCacheReuseOfAuthorized(cachedItem.Header) {
+		return nil, false
+	}
+	return cachedItem, true
+}
+
+// storeResponse caches the origin's response when it is a complete, storable
+// representation this shared cache is allowed to reuse.
+func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, varyHeaders []string, ttl time.Duration, authenticated bool) {
 	if !crw.copyComplete() || !responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
 		return
 	}
 	if authenticated && !responsePermitsSharedCacheReuseOfAuthorized(crw.cachedHeader) {
 		return
 	}
+
 	receivedAt := time.Now()
-	if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl, receivedAt); shouldStore {
-		c.Set(cacheKey, cache.CacheItem{
-			Content:  crw.buf.Bytes(),
-			Header:   crw.cachedHeader,
-			Trailer:  crw.cachedTrailer(),
-			Status:   crw.status,
-			StoredAt: receivedAt,
-		}, responseTTL)
+	responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl, receivedAt)
+	if !shouldStore {
+		return
 	}
+	c.Set(cacheKey, cache.CacheItem{
+		Content:  crw.buf.Bytes(),
+		Header:   crw.cachedHeader,
+		Trailer:  crw.cachedTrailer(),
+		Status:   crw.status,
+		StoredAt: receivedAt,
+	}, responseTTL)
 }
 
 // serveNonGet forwards a non-GET request to the origin and, when the method
