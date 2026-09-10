@@ -4,6 +4,22 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.1.5] — 2026-09-11
+
+### Fixed
+- Reject `TTL_MINUTES` values that overflow into negative durations (#68, #73).
+- Require explicit permission before reusing authenticated responses (#67, #72).
+- Account for the origin's age when caching GET responses (#66, #71).
+- Report an `Age` header on cached GET responses (#70).
+- Never cache a GET whose upstream copy did not complete (#69).
+- Invalidate cached GETs after successful unsafe requests (#65).
+- Honor origin response freshness when caching (#64).
+- Return 304 for cached GET responses when `If-Modified-Since` is satisfied (#62).
+- Honor wildcard `If-None-Match` without a cached ETag (#61).
+
+### Changed
+- Cap local Mutago runs at one worker (#63, #74).
+
 ## [v0.1.4] — 2026-09-10
 
 ### Fixed
@@ -54,3 +70,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.2]: https://github.com/jonbaldie/gleam/compare/v0.1.1...v0.1.2
 [v0.1.3]: https://github.com/jonbaldie/gleam/compare/v0.1.2...v0.1.3
 [v0.1.4]: https://github.com/jonbaldie/gleam/compare/v0.1.3...v0.1.4
+[v0.1.5]: https://github.com/jonbaldie/gleam/compare/v0.1.4...v0.1.5
