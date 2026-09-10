@@ -1505,6 +1505,9 @@ func TestResponseIsCacheable(t *testing.T) {
 
 func TestCacheTTLForResponse(t *testing.T) {
 	const configuredTTL = time.Minute
+	// Every case's Date, where present, is the moment the response arrived, so
+	// no origin-side age is consumed before storage.
+	receivedAt := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 
 	tests := []struct {
 		name      string
@@ -1576,7 +1579,7 @@ func TestCacheTTLForResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotTTL, gotStore := cacheTTLForResponse(tt.header, configuredTTL)
+			gotTTL, gotStore := cacheTTLForResponse(tt.header, configuredTTL, receivedAt)
 			if gotTTL != tt.wantTTL {
 				t.Errorf("cacheTTLForResponse() ttl = %v, want %v", gotTTL, tt.wantTTL)
 			}
