@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,12 +45,14 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 			p.ServeHTTP(crw, r)
 
 			if responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
-				c.Set(cacheKey, cache.CacheItem{
-					Content: crw.buf.Bytes(),
-					Header:  crw.cachedHeader,
-					Trailer: crw.cachedTrailer(),
-					Status:  crw.status,
-				}, ttl)
+				if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl); shouldStore {
+					c.Set(cacheKey, cache.CacheItem{
+						Content: crw.buf.Bytes(),
+						Header:  crw.cachedHeader,
+						Trailer: crw.cachedTrailer(),
+						Status:  crw.status,
+					}, responseTTL)
+				}
 			}
 			return
 		}
@@ -387,6 +390,72 @@ func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
 	return headerContainsToken(header.Values("Cache-Control"), "no-store") ||
 		headerContainsToken(header.Values("Cache-Control"), "no-cache") ||
 		headerContainsToken(header.Values("Cache-Control"), "private")
+}
+
+// cacheTTLForResponse caps the configured cache retention at the freshness
+// lifetime advertised by the origin. Responses with no usable freshness
+// directive retain the configured TTL; responses that are already stale are
+// not stored because cache hits are served without revalidation.
+func cacheTTLForResponse(header http.Header, configuredTTL time.Duration) (time.Duration, bool) {
+	freshnessLifetime, hasFreshness := responseFreshnessLifetime(header)
+	if !hasFreshness {
+		return configuredTTL, true
+	}
+	if freshnessLifetime <= 0 {
+		return 0, false
+	}
+	if freshnessLifetime < configuredTTL {
+		return freshnessLifetime, true
+	}
+	return configuredTTL, true
+}
+
+func responseFreshnessLifetime(header http.Header) (time.Duration, bool) {
+	if freshness, found := cacheControlAge(header, "s-maxage"); found {
+		return freshness, true
+	}
+	if freshness, found := cacheControlAge(header, "max-age"); found {
+		return freshness, true
+	}
+
+	expires, expiresOK := parseHTTPDate(header.Get("Expires"))
+	date, dateOK := parseHTTPDate(header.Get("Date"))
+	if expiresOK && dateOK {
+		return expires.Sub(date), true
+	}
+	return 0, false
+}
+
+func cacheControlAge(header http.Header, target string) (time.Duration, bool) {
+	for _, value := range header.Values("Cache-Control") {
+		for _, directive := range strings.Split(value, ",") {
+			name, argument, hasArgument := strings.Cut(directive, "=")
+			if !hasArgument || !strings.EqualFold(strings.TrimSpace(name), target) {
+				continue
+			}
+			if age, ok := parseCacheControlAge(argument); ok {
+				return age, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func parseCacheControlAge(raw string) (time.Duration, bool) {
+	raw = strings.TrimSpace(raw)
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		raw = strings.TrimSpace(raw[1 : len(raw)-1])
+	}
+	seconds, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+
+	maxDuration := time.Duration(1<<63 - 1)
+	if seconds > uint64(maxDuration/time.Second) {
+		return maxDuration, true
+	}
+	return time.Duration(seconds) * time.Second, true
 }
 
 func containsHeaderName(headers []string, target string) bool {

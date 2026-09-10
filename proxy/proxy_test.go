@@ -898,6 +898,35 @@ func TestBugHuntResponseNoCacheIsReused(t *testing.T) {
 	}
 }
 
+func TestProxyDoesNotReuseImmediatelyStaleResponse(t *testing.T) {
+	var calls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Cache-Control", "max-age=0")
+		_, _ = fmt.Fprintf(w, "body-%d", call)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+	if _, found := c.Get(cacheKeyForRequest(req)); found {
+		t.Fatal("expected immediately stale response not to be stored")
+	}
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, req)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("origin calls = %d, want 2 because Cache-Control: max-age=0 makes the response immediately stale", got)
+	}
+	if body := second.Body.String(); body != "body-2" {
+		t.Fatalf("second response body = %q, want %q", body, "body-2")
+	}
+}
+
 func TestBugHuntSetCookieResponseIsStored(t *testing.T) {
 	var calls atomic.Int32
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1469,6 +1498,90 @@ func TestResponseIsCacheable(t *testing.T) {
 			got := responseIsCacheable(tt.status, tt.header, tt.varyHeaders)
 			if got != tt.want {
 				t.Errorf("responseIsCacheable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCacheTTLForResponse(t *testing.T) {
+	const configuredTTL = time.Minute
+
+	tests := []struct {
+		name      string
+		header    http.Header
+		wantTTL   time.Duration
+		wantStore bool
+	}{
+		{
+			name:      "no explicit freshness keeps configured ttl",
+			header:    http.Header{"Date": []string{"Thu, 10 Sep 2026 00:00:00 GMT"}},
+			wantTTL:   configuredTTL,
+			wantStore: true,
+		},
+		{
+			name:      "max-age zero skips storage",
+			header:    http.Header{"Cache-Control": []string{"max-age=0"}},
+			wantTTL:   0,
+			wantStore: false,
+		},
+		{
+			name:      "max-age below configured ttl caps storage",
+			header:    http.Header{"Cache-Control": []string{"max-age=30"}},
+			wantTTL:   30 * time.Second,
+			wantStore: true,
+		},
+		{
+			name:      "max-age above configured ttl keeps configured ttl",
+			header:    http.Header{"Cache-Control": []string{"max-age=120"}},
+			wantTTL:   configuredTTL,
+			wantStore: true,
+		},
+		{
+			name:      "s-maxage takes precedence over max-age",
+			header:    http.Header{"Cache-Control": []string{"max-age=60, s-maxage=0"}},
+			wantTTL:   0,
+			wantStore: false,
+		},
+		{
+			name: "expires minus date provides fallback freshness",
+			header: http.Header{
+				"Date":    []string{"Thu, 10 Sep 2026 00:00:00 GMT"},
+				"Expires": []string{"Thu, 10 Sep 2026 00:00:45 GMT"},
+			},
+			wantTTL:   45 * time.Second,
+			wantStore: true,
+		},
+		{
+			name: "expires at date skips storage",
+			header: http.Header{
+				"Date":    []string{"Thu, 10 Sep 2026 00:00:00 GMT"},
+				"Expires": []string{"Thu, 10 Sep 2026 00:00:00 GMT"},
+			},
+			wantTTL:   0,
+			wantStore: false,
+		},
+		{
+			name:      "malformed max-age is ignored",
+			header:    http.Header{"Cache-Control": []string{"public, max-age=not-a-number"}},
+			wantTTL:   configuredTTL,
+			wantStore: true,
+		},
+		{
+			name:      "malformed s-maxage falls back to max-age",
+			header:    http.Header{"Cache-Control": []string{"s-maxage=bad, max-age=30"}},
+			wantTTL:   30 * time.Second,
+			wantStore: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTTL, gotStore := cacheTTLForResponse(tt.header, configuredTTL)
+			if gotTTL != tt.wantTTL {
+				t.Errorf("cacheTTLForResponse() ttl = %v, want %v", gotTTL, tt.wantTTL)
+			}
+			if gotStore != tt.wantStore {
+				t.Errorf("cacheTTLForResponse() store = %v, want %v", gotStore, tt.wantStore)
 			}
 		})
 	}
