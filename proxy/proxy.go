@@ -43,8 +43,12 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 			crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
 			p.ServeHTTP(crw, r)
+			// Reaching here means the reverse proxy returned normally; an
+			// abnormal unwind (http.ErrAbortHandler on a copy error) skips
+			// this and so skips storage too.
+			crw.proxyReturned = true
 
-			if responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
+			if crw.copyComplete() && responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
 				if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl); shouldStore {
 					c.Set(cacheKey, cache.CacheItem{
 						Content: crw.buf.Bytes(),
@@ -148,6 +152,17 @@ type cacheResponseWriter struct {
 	buf          *bytes.Buffer
 	status       int
 	cachedHeader http.Header
+	// proxyReturned records that the reverse proxy finished serving without
+	// unwinding, and writeErr the failure of any forwarded body write. A
+	// response is only a complete representation when both agree the copy ran
+	// to completion; storing anything less would poison the cache with a
+	// truncated body (RFC 9111 section 3).
+	proxyReturned bool
+	writeErr      error
+}
+
+func (w *cacheResponseWriter) copyComplete() bool {
+	return w.proxyReturned && w.writeErr == nil
 }
 
 func (w *cacheResponseWriter) WriteHeader(status int) {
@@ -161,7 +176,11 @@ func (w *cacheResponseWriter) Write(b []byte) (int, error) {
 		w.WriteHeader(w.status)
 	}
 	w.buf.Write(b)
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	if err != nil && w.writeErr == nil {
+		w.writeErr = err
+	}
+	return n, err
 }
 
 func (w *cacheResponseWriter) Header() http.Header {
