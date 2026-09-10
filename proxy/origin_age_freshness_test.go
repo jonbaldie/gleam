@@ -19,7 +19,7 @@ func TestBugHuntOriginAgeIgnoredForFreshness(t *testing.T) {
 		w.Header().Set("Cache-Control", "max-age=60")
 		w.Header().Set("Age", "60")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fmt.Sprintf("response-%d", n)))
+		_, _ = fmt.Fprintf(w, "response-%d", n)
 	}))
 	defer origin.Close()
 
