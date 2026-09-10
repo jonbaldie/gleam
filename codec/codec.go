@@ -208,6 +208,31 @@ func decodeTime(r *bytes.Reader) (time.Time, error) {
 	return t, nil
 }
 
+// decodeOptionalTail reads the fields appended to the format after its first
+// version — the trailer headers and the response time — each of which is
+// absent from entries written by an earlier version.
+func decodeOptionalTail(r *bytes.Reader, item *cache.CacheItem) error {
+	if r.Len() == 0 {
+		return nil
+	}
+	trailer, err := decodeHeaders(r)
+	if err != nil {
+		return err
+	}
+	item.Trailer = trailer
+
+	if r.Len() == 0 {
+		return nil
+	}
+	storedAt, err := decodeTime(r)
+	if err != nil {
+		return err
+	}
+	item.StoredAt = storedAt
+
+	return nil
+}
+
 func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	decoded, err := base64.StdEncoding.DecodeString(string(data))
 	if err != nil {
@@ -229,15 +254,8 @@ func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	if item.Expiration, err = decodeTime(buf); err != nil {
 		return nil, err
 	}
-	if buf.Len() > 0 {
-		if item.Trailer, err = decodeHeaders(buf); err != nil {
-			return nil, err
-		}
-	}
-	if buf.Len() > 0 {
-		if item.StoredAt, err = decodeTime(buf); err != nil {
-			return nil, err
-		}
+	if err := decodeOptionalTail(buf, item); err != nil {
+		return nil, err
 	}
 
 	return item, nil
