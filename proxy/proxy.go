@@ -39,15 +39,18 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 // it to the origin, storing the response when it is both storable and copied
 // through to the client in full.
 func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
-	// Request no-store forbids both serving from and storing in
-	// the cache (RFC 9111 section 5.2.1.5), so skip it entirely.
-	if requestForbidsStorage(r) || isUpgradeRequest(r) || requestRequiresRevalidation(r) || requestHasRange(r) {
+	if requestBypassesCache(r) {
 		p.ServeHTTP(w, r)
 		return
 	}
 
+	// RFC 9111 section 3.5: a shared cache may only reuse — or store — a
+	// response to an authenticated request when the response says so
+	// explicitly, whatever the request headers the cache key covers.
+	authenticated := requestHasAuthorization(r)
+
 	cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
-	if cachedItem, found := c.Get(cacheKey); found {
+	if cachedItem, found := reusableCachedItem(c, cacheKey, authenticated); found {
 		serveCachedItem(w, r, cachedItem)
 		return
 	}
@@ -59,19 +62,53 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	// storage too.
 	crw.proxyReturned = true
 
+	storeResponse(c, cacheKey, crw, varyHeaders, ttl, authenticated)
+}
+
+// requestBypassesCache reports whether a GET must go straight to the origin
+// without either a cache lookup or storage. Request no-store forbids both
+// (RFC 9111 section 5.2.1.5); no-cache demands revalidation this cache does
+// not perform; upgrades and ranges are not interchangeable with a full GET.
+func requestBypassesCache(r *http.Request) bool {
+	return requestForbidsStorage(r) || isUpgradeRequest(r) ||
+		requestRequiresRevalidation(r) || requestHasRange(r)
+}
+
+// reusableCachedItem returns the stored entry for a key when this cache may
+// answer the request from it.
+func reusableCachedItem(c cache.Cache, cacheKey string, authenticated bool) (*cache.CacheItem, bool) {
+	cachedItem, found := c.Get(cacheKey)
+	if !found {
+		return nil, false
+	}
+	if authenticated && !responsePermitsSharedCacheReuseOfAuthorized(cachedItem.Header) {
+		return nil, false
+	}
+	return cachedItem, true
+}
+
+// storeResponse caches the origin's response when it is a complete, storable
+// representation this shared cache is allowed to reuse.
+func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, varyHeaders []string, ttl time.Duration, authenticated bool) {
 	if !crw.copyComplete() || !responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
 		return
 	}
-	receivedAt := time.Now()
-	if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl, receivedAt); shouldStore {
-		c.Set(cacheKey, cache.CacheItem{
-			Content:  crw.buf.Bytes(),
-			Header:   crw.cachedHeader,
-			Trailer:  crw.cachedTrailer(),
-			Status:   crw.status,
-			StoredAt: receivedAt,
-		}, responseTTL)
+	if authenticated && !responsePermitsSharedCacheReuseOfAuthorized(crw.cachedHeader) {
+		return
 	}
+
+	receivedAt := time.Now()
+	responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl, receivedAt)
+	if !shouldStore {
+		return
+	}
+	c.Set(cacheKey, cache.CacheItem{
+		Content:  crw.buf.Bytes(),
+		Header:   crw.cachedHeader,
+		Trailer:  crw.cachedTrailer(),
+		Status:   crw.status,
+		StoredAt: receivedAt,
+	}, responseTTL)
 }
 
 // serveNonGet forwards a non-GET request to the origin and, when the method
@@ -510,6 +547,28 @@ func requestForbidsStorage(r *http.Request) bool {
 // rather than keying on the Range header.
 func requestHasRange(r *http.Request) bool {
 	return len(r.Header.Values("Range")) > 0
+}
+
+func requestHasAuthorization(r *http.Request) bool {
+	for _, value := range r.Header.Values("Authorization") {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// responsePermitsSharedCacheReuseOfAuthorized reports whether a response
+// carries one of the directives RFC 9111 section 3.5 accepts as explicit
+// permission for a shared cache to reuse it for a request bearing
+// Authorization.
+func responsePermitsSharedCacheReuseOfAuthorized(header http.Header) bool {
+	if headerContainsToken(header.Values("Cache-Control"), "public") ||
+		headerContainsToken(header.Values("Cache-Control"), "must-revalidate") {
+		return true
+	}
+	_, hasSMaxAge := cacheControlAge(header, "s-maxage")
+	return hasSMaxAge
 }
 
 func responseIsCacheable(status int, header http.Header, varyHeaders []string) bool {
