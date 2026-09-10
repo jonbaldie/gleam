@@ -71,6 +71,9 @@ func TestProxySuccessfulPOSTInvalidatesAllVaryVariants(t *testing.T) {
 			return
 		}
 		getCalls.Add(1)
+		// Authenticated requests only reuse responses that permit shared
+		// caching explicitly (RFC 9111 section 3.5).
+		w.Header().Set("Cache-Control", "public")
 		_, _ = w.Write([]byte("state-" + r.Header.Get("Authorization")))
 	}))
 	defer origin.Close()

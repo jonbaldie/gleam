@@ -154,6 +154,9 @@ func TestProxyCachesEquivalentGetsWithSameAuthorizationHeader(t *testing.T) {
 	var originCalls atomic.Int32
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
+		// Authenticated requests only reuse responses that permit shared
+		// caching explicitly (RFC 9111 section 3.5).
+		w.Header().Set("Cache-Control", "public")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
 	}))
@@ -226,6 +229,17 @@ func mustCachingProxyHandler(t *testing.T, originURL string, c cache.Cache, ttl 
 	}
 
 	return New(origin, c, ttl)
+}
+
+func mustCachingProxyHandlerWithVaryHeaders(t *testing.T, originURL string, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
+	t.Helper()
+
+	origin, err := url.Parse(originURL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+
+	return NewWithVaryHeaders(origin, c, ttl, varyHeaders)
 }
 
 // TestProxyDoesNotCacheStatus300 kills gleam.go:47 (expression/comparison changes
@@ -1133,6 +1147,7 @@ func TestProxyCachesResponsesWithCaseInsensitiveVaryHeaders(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Vary", "cookie, AUTHORIZATION")
+		w.Header().Set("Cache-Control", "public")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("ok"))
 	}))

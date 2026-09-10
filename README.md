@@ -28,6 +28,8 @@ Set the following environment variables to configure Gleam:
 
 Gleam will cache GET requests and serve cached responses when available, improving response times and reducing load on your origin server.
 
+As a shared cache, Gleam will not reuse a response for a request carrying an `Authorization` header unless that response explicitly permits shared caching with `Cache-Control: public`, `must-revalidate`, or `s-maxage` (RFC 9111 section 3.5).
+
 ## Linting
 
 The repository lint gate is:

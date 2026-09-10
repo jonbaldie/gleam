@@ -46,10 +46,17 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 		return
 	}
 
+	// RFC 9111 section 3.5: a shared cache may only reuse — or store — a
+	// response to an authenticated request when the response says so
+	// explicitly, whatever the request headers the cache key covers.
+	authenticated := requestHasAuthorization(r)
+
 	cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 	if cachedItem, found := c.Get(cacheKey); found {
-		serveCachedItem(w, r, cachedItem)
-		return
+		if !authenticated || responsePermitsSharedCacheReuseOfAuthorized(cachedItem.Header) {
+			serveCachedItem(w, r, cachedItem)
+			return
+		}
 	}
 
 	crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
@@ -60,6 +67,9 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	crw.proxyReturned = true
 
 	if !crw.copyComplete() || !responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
+		return
+	}
+	if authenticated && !responsePermitsSharedCacheReuseOfAuthorized(crw.cachedHeader) {
 		return
 	}
 	receivedAt := time.Now()
@@ -510,6 +520,28 @@ func requestForbidsStorage(r *http.Request) bool {
 // rather than keying on the Range header.
 func requestHasRange(r *http.Request) bool {
 	return len(r.Header.Values("Range")) > 0
+}
+
+func requestHasAuthorization(r *http.Request) bool {
+	for _, value := range r.Header.Values("Authorization") {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// responsePermitsSharedCacheReuseOfAuthorized reports whether a response
+// carries one of the directives RFC 9111 section 3.5 accepts as explicit
+// permission for a shared cache to reuse it for a request bearing
+// Authorization.
+func responsePermitsSharedCacheReuseOfAuthorized(header http.Header) bool {
+	if headerContainsToken(header.Values("Cache-Control"), "public") ||
+		headerContainsToken(header.Values("Cache-Control"), "must-revalidate") {
+		return true
+	}
+	_, hasSMaxAge := cacheControlAge(header, "s-maxage")
+	return hasSMaxAge
 }
 
 func responseIsCacheable(status int, header http.Header, varyHeaders []string) bool {
