@@ -62,13 +62,14 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	if !crw.copyComplete() || !responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
 		return
 	}
-	if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl); shouldStore {
+	receivedAt := time.Now()
+	if responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl, receivedAt); shouldStore {
 		c.Set(cacheKey, cache.CacheItem{
 			Content:  crw.buf.Bytes(),
 			Header:   crw.cachedHeader,
 			Trailer:  crw.cachedTrailer(),
 			Status:   crw.status,
-			StoredAt: time.Now(),
+			StoredAt: receivedAt,
 		}, responseTTL)
 	}
 }
@@ -293,7 +294,7 @@ func copyCachedHeaders(w http.ResponseWriter, item *cache.CacheItem) {
 // response: the age the origin's copy already had when this cache received it,
 // plus the time it has been resident here since.
 func currentAgeSeconds(item *cache.CacheItem, now time.Time) uint64 {
-	correctedInitialAge := correctedInitialAge(item)
+	correctedInitialAge := correctedInitialAge(item.Header, item.StoredAt)
 
 	var residentTime time.Duration
 	if !item.StoredAt.IsZero() {
@@ -306,16 +307,16 @@ func currentAgeSeconds(item *cache.CacheItem, now time.Time) uint64 {
 // correctedInitialAge is the greater of the age the origin claimed and the age
 // apparent from the response's Date, measured at the moment this cache
 // received the response.
-func correctedInitialAge(item *cache.CacheItem) time.Duration {
+func correctedInitialAge(header http.Header, receivedAt time.Time) time.Duration {
 	var apparentAge time.Duration
-	if date, ok := parseHTTPDate(item.Header.Get("Date")); ok && !item.StoredAt.IsZero() {
-		apparentAge = item.StoredAt.Sub(date)
+	if date, ok := parseHTTPDate(header.Get("Date")); ok && !receivedAt.IsZero() {
+		apparentAge = receivedAt.Sub(date)
 	}
 	if apparentAge < 0 {
 		apparentAge = 0
 	}
 
-	ageValue, ok := parseAgeValue(item.Header.Get("Age"))
+	ageValue, ok := parseAgeValue(header.Get("Age"))
 	if ok && ageValue > apparentAge {
 		return ageValue
 	}
@@ -543,19 +544,22 @@ func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
 }
 
 // cacheTTLForResponse caps the configured cache retention at the freshness
-// lifetime advertised by the origin. Responses with no usable freshness
-// directive retain the configured TTL; responses that are already stale are
-// not stored because cache hits are served without revalidation.
-func cacheTTLForResponse(header http.Header, configuredTTL time.Duration) (time.Duration, bool) {
+// the origin's response has left: its advertised freshness lifetime less the
+// age the response already carried when it arrived here (RFC 9111 sections
+// 4.2 and 4.2.3). Responses with no usable freshness directive retain the
+// configured TTL; responses that are already stale are not stored because
+// cache hits are served without revalidation.
+func cacheTTLForResponse(header http.Header, configuredTTL time.Duration, receivedAt time.Time) (time.Duration, bool) {
 	freshnessLifetime, hasFreshness := responseFreshnessLifetime(header)
 	if !hasFreshness {
 		return configuredTTL, true
 	}
-	if freshnessLifetime <= 0 {
+	remainingFreshness := freshnessLifetime - correctedInitialAge(header, receivedAt)
+	if remainingFreshness <= 0 {
 		return 0, false
 	}
-	if freshnessLifetime < configuredTTL {
-		return freshnessLifetime, true
+	if remainingFreshness < configuredTTL {
+		return remainingFreshness, true
 	}
 	return configuredTTL, true
 }
