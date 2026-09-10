@@ -102,6 +102,35 @@ func TestLoadConfigFromEnvRejectsZeroTTLMinutes(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnvRejectsOverflowingTTLMinutes(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("TTL_MINUTES", "153722868")
+
+	_, err := loadConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected overflowing positive TTL_MINUTES to fail")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected overflow error for TTL_MINUTES, got %v", err)
+	}
+}
+
+func TestLoadConfigFromEnvKeepsLargePositiveTTLOverflowFree(t *testing.T) {
+	t.Setenv("ORIGIN_URL", "https://example.com")
+	t.Setenv("TTL_MINUTES", "153722867")
+
+	config, err := loadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected largest representable TTL_MINUTES to load, got error: %v", err)
+	}
+	if config.TTL <= 0 {
+		t.Fatalf("expected positive TTL, got %v", config.TTL)
+	}
+	if want := time.Duration(153722867) * time.Minute; config.TTL != want {
+		t.Fatalf("expected TTL %v, got %v", want, config.TTL)
+	}
+}
+
 func TestLoadConfigFromEnvRejectsNegativeTTLMinutes(t *testing.T) {
 	t.Setenv("ORIGIN_URL", "https://example.com")
 	t.Setenv("TTL_MINUTES", "-5")

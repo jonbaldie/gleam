@@ -7,6 +7,7 @@ import (
 	"jonbaldie/gleam/codec"
 	"jonbaldie/gleam/proxy"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -187,6 +188,9 @@ func loadConfigFromEnv() (*Config, error) {
 	}
 	if ttlMinutes <= 0 {
 		return nil, fmt.Errorf("invalid TTL_MINUTES %d: must be greater than 0", ttlMinutes)
+	}
+	if ttlMinutes > int(math.MaxInt64/int64(time.Minute)) {
+		return nil, fmt.Errorf("invalid TTL_MINUTES %d: too large to represent as a duration", ttlMinutes)
 	}
 
 	redisUrl := getenv("REDIS_URL", "redis://localhost:6379/0")
