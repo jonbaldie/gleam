@@ -52,6 +52,41 @@ func TestBugHuntIfModifiedSinceOnCacheHitIsIgnored(t *testing.T) {
 	}
 }
 
+// TestBugHuntMultiValueIfModifiedSinceIsIgnored reproduces jonbaldie/gleam#77:
+// a cache hit evaluates each If-Modified-Since field value and returns 304 if
+// any matches, but RFC 9110 section 13.1.3 requires ignoring the field
+// entirely when it contains more than one member.
+func TestBugHuntMultiValueIfModifiedSinceIsIgnored(t *testing.T) {
+	const lastModified = "Thu, 10 Sep 2026 00:00:00 GMT"
+
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Set("Last-Modified", lastModified)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer origin.Close()
+
+	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
+
+	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	conditional.Header["If-Modified-Since"] = []string{
+		"Thu, 10 Sep 2026 00:00:00 GMT",
+		"Fri, 11 Sep 2026 00:00:00 GMT",
+	}
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, conditional)
+
+	if second.Code != http.StatusOK {
+		t.Fatalf("expected multi-member If-Modified-Since to be ignored, got status %d, want %d", second.Code, http.StatusOK)
+	}
+	if body := second.Body.String(); body != "body" {
+		t.Fatalf("expected full representation body, got %q", body)
+	}
+}
+
 func TestProxyConditionalGETWithIfModifiedSince(t *testing.T) {
 	const lastModified = "Thu, 10 Sep 2026 03:58:45 GMT"
 	const earlier = "Thu, 01 Jan 2026 00:00:00 GMT"
@@ -194,8 +229,11 @@ func TestIfModifiedSinceSatisfied(t *testing.T) {
 		{name: "surrounding whitespace", ifModifiedSince: []string{"  " + rfc1123 + "  "}, lastModified: rfc1123, want: true},
 		{name: "rfc850 format", ifModifiedSince: []string{"Thursday, 10-Sep-26 03:58:45 GMT"}, lastModified: rfc1123, want: true},
 		{name: "asctime format", ifModifiedSince: []string{"Thu Sep 10 03:58:45 2026"}, lastModified: rfc1123, want: true},
-		{name: "one unparseable then a valid value", ifModifiedSince: []string{"garbage", rfc1123}, lastModified: rfc1123, want: true},
-		{name: "second header value valid", ifModifiedSince: []string{"garbage", rfc1123}, lastModified: rfc1123, want: true},
+		{name: "two valid values ignored", ifModifiedSince: []string{rfc1123, "Fri, 11 Sep 2026 00:00:00 GMT"}, lastModified: rfc1123, want: false},
+		{name: "two values matching stored date ignored", ifModifiedSince: []string{rfc1123, rfc1123}, lastModified: rfc1123, want: false},
+		{name: "one unparseable then a valid value ignored", ifModifiedSince: []string{"garbage", rfc1123}, lastModified: rfc1123, want: false},
+		{name: "two header values ignored", ifModifiedSince: []string{"garbage", rfc1123}, lastModified: rfc1123, want: false},
+		{name: "two valid values with non-matching dates", ifModifiedSince: []string{"Wed, 09 Sep 2026 00:00:00 GMT", "Wed, 09 Sep 2026 00:00:00 GMT"}, lastModified: rfc1123, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
