@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 
 ### Fixed
 - Reject `TTL_MINUTES` values that overflow into negative durations (#68, #73).
+- Ignore `If-Modified-Since` on cached GETs when the field contains more than one member (#77, #79).
 - Require explicit permission before reusing authenticated responses (#67, #72).
 - Account for the origin's age when caching GET responses (#66, #71).
 - Report an `Age` header on cached GET responses (#70).
