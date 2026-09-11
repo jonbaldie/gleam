@@ -609,7 +609,7 @@ func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
 // configured TTL; responses that are already stale are not stored because
 // cache hits are served without revalidation.
 func cacheTTLForResponse(header http.Header, configuredTTL time.Duration, receivedAt time.Time) (time.Duration, bool) {
-	freshnessLifetime, hasFreshness := responseFreshnessLifetime(header)
+	freshnessLifetime, hasFreshness := responseFreshnessLifetime(header, receivedAt)
 	if !hasFreshness {
 		return configuredTTL, true
 	}
@@ -623,7 +623,7 @@ func cacheTTLForResponse(header http.Header, configuredTTL time.Duration, receiv
 	return configuredTTL, true
 }
 
-func responseFreshnessLifetime(header http.Header) (time.Duration, bool) {
+func responseFreshnessLifetime(header http.Header, receivedAt time.Time) (time.Duration, bool) {
 	if freshness, found := cacheControlAge(header, "s-maxage"); found {
 		return freshness, true
 	}
@@ -631,10 +631,22 @@ func responseFreshnessLifetime(header http.Header) (time.Duration, bool) {
 		return freshness, true
 	}
 
-	expires, expiresOK := parseHTTPDate(header.Get("Expires"))
-	date, dateOK := parseHTTPDate(header.Get("Date"))
-	if expiresOK && dateOK {
-		return expires.Sub(date), true
+	if len(header.Values("Expires")) > 0 {
+		referenceTime := receivedAt
+		if date, dateOK := parseHTTPDate(header.Get("Date")); dateOK {
+			referenceTime = date
+		} else if referenceTime.IsZero() {
+			referenceTime = time.Now()
+		}
+
+		expires, expiresOK := parseHTTPDate(header.Get("Expires"))
+		if !expiresOK || !expires.After(referenceTime) {
+			// RFC 9111 section 5.3: A cache recipient MUST interpret invalid
+			// date formats, especially the value "0", as representing a time in
+			// the past (i.e., "already expired").
+			return 0, true
+		}
+		return expires.Sub(referenceTime), true
 	}
 	return 0, false
 }
