@@ -428,25 +428,21 @@ func ifNoneMatchMatches(ifNoneMatch []string, etag string) bool {
 // given Last-Modified date has not been modified since the request's
 // If-Modified-Since date, i.e. whether it can be answered with 304 locally.
 // A condition that is absent, or whose date cannot be parsed as an HTTP date,
-// is ignored rather than treated as a match (RFC 9110 section 13.1.3).
+// is ignored rather than treated as a match. A field with more than one
+// member is ignored entirely (RFC 9110 section 13.1.3).
 func ifModifiedSinceSatisfied(ifModifiedSince []string, lastModified string) bool {
-	if len(ifModifiedSince) == 0 {
+	if len(ifModifiedSince) != 1 {
 		return false
 	}
 	stored, ok := parseHTTPDate(lastModified)
 	if !ok {
 		return false
 	}
-	for _, value := range ifModifiedSince {
-		condition, ok := parseHTTPDate(value)
-		if !ok {
-			continue
-		}
-		if !stored.After(condition) {
-			return true
-		}
+	condition, ok := parseHTTPDate(ifModifiedSince[0])
+	if !ok {
+		return false
 	}
-	return false
+	return !stored.After(condition)
 }
 
 func parseHTTPDate(raw string) (time.Time, bool) {
