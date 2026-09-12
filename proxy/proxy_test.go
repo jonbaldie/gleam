@@ -1297,6 +1297,13 @@ func TestResponseIsCacheable(t *testing.T) {
 			want:        true,
 		},
 		{
+			name:        "201 Created with s-maxage",
+			status:      http.StatusCreated,
+			header:      http.Header{"Cache-Control": []string{"s-maxage=60"}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
 			name:        "202 Accepted without explicit cacheability",
 			status:      http.StatusAccepted,
 			header:      http.Header{},
@@ -1311,6 +1318,13 @@ func TestResponseIsCacheable(t *testing.T) {
 			want:        true,
 		},
 		{
+			name:        "202 Accepted with Expires",
+			status:      http.StatusAccepted,
+			header:      http.Header{"Expires": []string{"Thu, 10 Sep 2026 00:01:00 GMT"}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
 			name:        "204 No Content without Vary",
 			status:      http.StatusNoContent,
 			header:      http.Header{},
@@ -1321,6 +1335,13 @@ func TestResponseIsCacheable(t *testing.T) {
 			name:        "206 Partial Content",
 			status:      http.StatusPartialContent,
 			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "206 Partial Content with public",
+			status:      http.StatusPartialContent,
+			header:      http.Header{"Cache-Control": []string{"public"}},
 			varyHeaders: varyConfig,
 			want:        false,
 		},
