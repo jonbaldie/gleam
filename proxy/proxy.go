@@ -531,11 +531,11 @@ func isUpgradeRequest(r *http.Request) bool {
 }
 
 func requestRequiresRevalidation(r *http.Request) bool {
-	return headerContainsToken(r.Header.Values("Cache-Control"), "no-cache")
+	return cacheControlHasDirective(r.Header, "no-cache")
 }
 
 func requestForbidsStorage(r *http.Request) bool {
-	return headerContainsToken(r.Header.Values("Cache-Control"), "no-store")
+	return cacheControlHasDirective(r.Header, "no-store")
 }
 
 // Range requests select a partial representation, so their responses are not
@@ -623,10 +623,16 @@ func responseHasExplicitCacheability(header http.Header) bool {
 
 // In a shared cache, private responses are user-specific: storing them risks
 // leaking one client's data to another.
+//
+// The qualified forms `private="X-User-Id"` and `no-cache="X-Secret"` (RFC 9111
+// sections 5.2.2.7 and 5.2.2.4) name fields a shared cache must not store or
+// must revalidate before reuse. Gleam serves hits without revalidation and
+// stores whole responses, so it takes the conservative fallback both sections
+// permit and declines to store the response at all.
 func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
-	return headerContainsToken(header.Values("Cache-Control"), "no-store") ||
-		headerContainsToken(header.Values("Cache-Control"), "no-cache") ||
-		headerContainsToken(header.Values("Cache-Control"), "private")
+	return cacheControlHasDirective(header, "no-store") ||
+		cacheControlHasDirective(header, "no-cache") ||
+		cacheControlHasDirective(header, "private")
 }
 
 // cacheTTLForResponse caps the configured cache retention at the freshness
@@ -679,15 +685,13 @@ func responseFreshnessLifetime(header http.Header, receivedAt time.Time) (time.D
 }
 
 func cacheControlAge(header http.Header, target string) (time.Duration, bool) {
-	for _, value := range header.Values("Cache-Control") {
-		for _, directive := range strings.Split(value, ",") {
-			name, argument, hasArgument := strings.Cut(directive, "=")
-			if !hasArgument || !strings.EqualFold(strings.TrimSpace(name), target) {
-				continue
-			}
-			if age, ok := parseCacheControlAge(argument); ok {
-				return age, true
-			}
+	for _, directive := range cacheControlDirectives(header) {
+		name, argument, hasArgument := strings.Cut(directive, "=")
+		if !hasArgument || !strings.EqualFold(strings.TrimSpace(name), target) {
+			continue
+		}
+		if age, ok := parseCacheControlAge(argument); ok {
+			return age, true
 		}
 	}
 	return 0, false
@@ -717,6 +721,60 @@ func containsHeaderName(headers []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// cacheControlHasDirective reports whether the Cache-Control header carries
+// the named directive, whether bare (`private`) or qualified with an argument
+// (`private="X-User-Id"`).
+func cacheControlHasDirective(header http.Header, name string) bool {
+	for _, directive := range cacheControlDirectives(header) {
+		directiveName, _, _ := strings.Cut(directive, "=")
+		if strings.EqualFold(strings.TrimSpace(directiveName), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// cacheControlDirectives splits the Cache-Control header into its directives.
+func cacheControlDirectives(header http.Header) []string {
+	var directives []string
+	for _, value := range header.Values("Cache-Control") {
+		directives = append(directives, splitCacheControlValue(value)...)
+	}
+	return directives
+}
+
+// splitCacheControlValue splits one Cache-Control field value on the commas
+// that separate directives. Unlike a plain comma split it leaves the commas
+// inside a quoted-string argument in place, so the field-name list in
+// `private="X-A, X-B"` stays with its directive (RFC 9111 section 5.2).
+func splitCacheControlValue(value string) []string {
+	var directives []string
+	start := 0
+	inQuotes := false
+	escaped := false
+	for i, c := range value {
+		switch {
+		case escaped:
+			escaped = false
+		case c == '\\' && inQuotes:
+			escaped = true
+		case c == '"':
+			inQuotes = !inQuotes
+		case c == ',' && !inQuotes:
+			directives = appendDirective(directives, value[start:i])
+			start = i + 1
+		}
+	}
+	return appendDirective(directives, value[start:])
+}
+
+func appendDirective(directives []string, raw string) []string {
+	if directive := strings.TrimSpace(raw); directive != "" {
+		return append(directives, directive)
+	}
+	return directives
 }
 
 func headerContainsToken(values []string, token string) bool {
