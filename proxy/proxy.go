@@ -568,10 +568,7 @@ func responsePermitsSharedCacheReuseOfAuthorized(header http.Header) bool {
 }
 
 func responseIsCacheable(status int, header http.Header, varyHeaders []string) bool {
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return false
-	}
-	if status == http.StatusPartialContent {
+	if !responseStatusAllowsStorage(status, header) {
 		return false
 	}
 	if cacheControlForbidsSharedCacheStorage(header) {
@@ -588,6 +585,40 @@ func responseIsCacheable(status int, header http.Header, varyHeaders []string) b
 		}
 	}
 	return true
+}
+
+func responseStatusAllowsStorage(status int, header http.Header) bool {
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return false
+	}
+	if status == http.StatusPartialContent {
+		return false
+	}
+	// RFC 9111 section 3 permits storing a response only when it has an
+	// explicit cacheability directive or a heuristically cacheable status.
+	return isHeuristicallyCacheableStatus(status) || responseHasExplicitCacheability(header)
+}
+
+func isHeuristicallyCacheableStatus(status int) bool {
+	switch status {
+	case http.StatusOK, http.StatusNonAuthoritativeInfo, http.StatusNoContent:
+		return true
+	default:
+		return false
+	}
+}
+
+func responseHasExplicitCacheability(header http.Header) bool {
+	if headerContainsToken(header.Values("Cache-Control"), "public") {
+		return true
+	}
+	if _, found := cacheControlAge(header, "s-maxage"); found {
+		return true
+	}
+	if _, found := cacheControlAge(header, "max-age"); found {
+		return true
+	}
+	return len(header.Values("Expires")) > 0
 }
 
 // In a shared cache, private responses are user-specific: storing them risks

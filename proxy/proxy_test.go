@@ -34,41 +34,55 @@ func TestCacheResponseWriter(t *testing.T) {
 	}
 }
 
-func TestProxyCachesSuccessfulStatusCodeOnCacheHit(t *testing.T) {
-	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		originCalls.Add(1)
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte("created"))
-	}))
-	defer origin.Close()
-
-	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
-
-	first := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
-	handler.ServeHTTP(first, req)
-	if first.Code != http.StatusCreated {
-		t.Fatalf("expected first response status %d, got %d", http.StatusCreated, first.Code)
+func TestProxyDoesNotCacheUnfreshSuccessfulStatusCodes(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		path   string
+		body   string
+	}{
+		{name: "201 Created", status: http.StatusCreated, path: "/resource", body: "created"},
+		{name: "202 Accepted", status: http.StatusAccepted, path: "/job", body: "accepted"},
 	}
 
-	second := httptest.NewRecorder()
-	handler.ServeHTTP(second, req)
-	if second.Code != http.StatusCreated {
-		t.Fatalf("expected cached response status %d, got %d", http.StatusCreated, second.Code)
-	}
-	if body := second.Body.String(); body != "created" {
-		t.Fatalf("expected cached body %q, got %q", "created", body)
-	}
-	if got := originCalls.Load(); got != 1 {
-		t.Fatalf("expected one origin call after cache hit, got %d", got)
-	}
-	if item, found := c.Get(cacheKeyForRequest(req)); !found {
-		t.Fatal("expected successful response to be cached")
-	} else if item.Status != http.StatusCreated {
-		t.Fatalf("expected cached item status %d, got %d", http.StatusCreated, item.Status)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var originCalls atomic.Int32
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				call := originCalls.Add(1)
+				w.WriteHeader(tt.status)
+				_, _ = fmt.Fprintf(w, "%s-%d", tt.body, call)
+			}))
+			defer origin.Close()
+
+			c := newMockCache()
+			handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+
+			first := httptest.NewRecorder()
+			handler.ServeHTTP(first, req)
+			if first.Code != tt.status {
+				t.Fatalf("expected first response status %d, got %d", tt.status, first.Code)
+			}
+			if body := first.Body.String(); body != tt.body+"-1" {
+				t.Fatalf("expected first response body %q, got %q", tt.body+"-1", body)
+			}
+
+			second := httptest.NewRecorder()
+			handler.ServeHTTP(second, req)
+			if second.Code != tt.status {
+				t.Fatalf("expected second response status %d, got %d", tt.status, second.Code)
+			}
+			if body := second.Body.String(); body != tt.body+"-2" {
+				t.Fatalf("expected second request to reach origin with body %q, got %q", tt.body+"-2", body)
+			}
+			if got := originCalls.Load(); got != 2 {
+				t.Fatalf("expected two origin calls because an unfresh %d response must not be cached, got %d", tt.status, got)
+			}
+			if _, found := c.Get(cacheKeyForRequest(req)); found {
+				t.Fatalf("expected unfresh %d response not to be cached", tt.status)
+			}
+		})
 	}
 }
 
@@ -1269,9 +1283,30 @@ func TestResponseIsCacheable(t *testing.T) {
 			want:        true,
 		},
 		{
-			name:        "201 Created without Vary",
+			name:        "201 Created without explicit cacheability",
 			status:      http.StatusCreated,
 			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "201 Created with public",
+			status:      http.StatusCreated,
+			header:      http.Header{"Cache-Control": []string{"public"}},
+			varyHeaders: varyConfig,
+			want:        true,
+		},
+		{
+			name:        "202 Accepted without explicit cacheability",
+			status:      http.StatusAccepted,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "202 Accepted with max-age",
+			status:      http.StatusAccepted,
+			header:      http.Header{"Cache-Control": []string{"max-age=60"}},
 			varyHeaders: varyConfig,
 			want:        true,
 		},
@@ -1294,7 +1329,21 @@ func TestResponseIsCacheable(t *testing.T) {
 			status:      299,
 			header:      http.Header{},
 			varyHeaders: varyConfig,
+			want:        false,
+		},
+		{
+			name:        "203 Non-Authoritative Info without Vary",
+			status:      http.StatusNonAuthoritativeInfo,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
 			want:        true,
+		},
+		{
+			name:        "205 Reset Content without explicit cacheability",
+			status:      http.StatusResetContent,
+			header:      http.Header{},
+			varyHeaders: varyConfig,
+			want:        false,
 		},
 		{
 			name:        "199 status below OK",
