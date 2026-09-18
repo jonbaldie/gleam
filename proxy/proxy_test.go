@@ -455,6 +455,41 @@ func TestProxyConditionalGETOnCacheHit(t *testing.T) {
 	}
 }
 
+// TestProxyIfModifiedSinceIgnoredForNon200CachedStatus verifies RFC 9110
+// section 13.1.3: a recipient must ignore If-Modified-Since if the request,
+// absent the condition, would result in anything other than 200 OK. Gleam
+// issue #87.
+func TestProxyIfModifiedSinceIgnoredForNon200CachedStatus(t *testing.T) {
+	const lastModified = "Thu, 10 Sep 2026 03:58:45 GMT"
+
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Set("Last-Modified", lastModified)
+		w.WriteHeader(http.StatusNonAuthoritativeInfo)
+		_, _ = w.Write([]byte("transformed-body"))
+	}))
+	defer origin.Close()
+
+	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
+
+	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	conditional.Header.Set("If-Modified-Since", lastModified)
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, conditional)
+
+	if second.Code != http.StatusNonAuthoritativeInfo {
+		t.Fatalf("status = %d, want %d", second.Code, http.StatusNonAuthoritativeInfo)
+	}
+	if body := second.Body.String(); body != "transformed-body" {
+		t.Fatalf("body = %q, want %q", body, "transformed-body")
+	}
+	if got := originCalls.Load(); got != 1 {
+		t.Fatalf("origin calls = %d, want 1", got)
+	}
+}
+
 func TestIfNoneMatchMatches(t *testing.T) {
 	tests := []struct {
 		name        string
