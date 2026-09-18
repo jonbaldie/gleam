@@ -287,7 +287,10 @@ func serveCachedItem(w http.ResponseWriter, r *http.Request, item *cache.CacheIt
 			writeCachedNotModified(w, item)
 			return
 		}
-	} else if ifModifiedSinceSatisfied(r.Header.Values("If-Modified-Since"), item.Header.Get("Last-Modified")) {
+	} else if item.Status == http.StatusOK &&
+		// RFC 9110 section 13.1.3: If-Modified-Since must be ignored unless the
+		// stored representation is a 200 OK.
+		ifModifiedSinceSatisfied(r.Header.Values("If-Modified-Since"), item.Header.Get("Last-Modified")) {
 		writeCachedNotModified(w, item)
 		return
 	}
