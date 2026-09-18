@@ -39,6 +39,36 @@ func TestBugHuntOriginAgeIgnoredForFreshness(t *testing.T) {
 	}
 }
 
+// TestBugHuntHeuristicCacheIgnoresOriginAge reproduces jonbaldie/gleam#88: a
+// heuristically cacheable response (no Cache-Control/Expires) that already
+// carries an Age exceeding the configured TTL is already stale on arrival and
+// must not be served from cache without revalidation.
+func TestBugHuntHeuristicCacheIgnoresOriginAge(t *testing.T) {
+	var calls int64
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&calls, 1)
+		w.Header().Set("Age", "600")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, "response-%d", n)
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	for i := 1; i <= 2; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if got, want := rec.Body.String(), fmt.Sprintf("response-%d", i); got != want {
+			t.Fatalf("request %d: expected body %q, got %q", i, want, got)
+		}
+	}
+	if got := atomic.LoadInt64(&calls); got != 2 {
+		t.Fatalf("expected the origin to be called twice, got %d", got)
+	}
+}
+
 func TestCacheTTLForResponseAccountsForOriginAge(t *testing.T) {
 	receivedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -76,8 +106,21 @@ func TestCacheTTLForResponseAccountsForOriginAge(t *testing.T) {
 			wantStore:     true,
 		},
 		{
-			name:          "no freshness directive keeps the configured TTL",
+			name:          "no freshness directive but origin age exceeds the configured TTL is not stored",
 			header:        http.Header{"Age": {"120"}},
+			configuredTTL: 30 * time.Second,
+			wantStore:     false,
+		},
+		{
+			name:          "no freshness directive and origin age within the configured TTL shortens it",
+			header:        http.Header{"Age": {"45"}},
+			configuredTTL: time.Minute,
+			wantTTL:       15 * time.Second,
+			wantStore:     true,
+		},
+		{
+			name:          "no freshness directive and no origin age keeps the configured TTL",
+			header:        http.Header{},
 			configuredTTL: 30 * time.Second,
 			wantTTL:       30 * time.Second,
 			wantStore:     true,
