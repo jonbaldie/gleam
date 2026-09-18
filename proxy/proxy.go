@@ -638,13 +638,15 @@ func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
 // cacheTTLForResponse caps the configured cache retention at the freshness
 // the origin's response has left: its advertised freshness lifetime less the
 // age the response already carried when it arrived here (RFC 9111 sections
-// 4.2 and 4.2.3). Responses with no usable freshness directive retain the
-// configured TTL; responses that are already stale are not stored because
-// cache hits are served without revalidation.
+// 4.2 and 4.2.3). Responses with no usable freshness directive are
+// heuristically cacheable for the configured TTL, which stands in as their
+// freshness lifetime and is likewise reduced by the response's initial age;
+// responses that are already stale are not stored because cache hits are
+// served without revalidation.
 func cacheTTLForResponse(header http.Header, configuredTTL time.Duration, receivedAt time.Time) (time.Duration, bool) {
 	freshnessLifetime, hasFreshness := responseFreshnessLifetime(header, receivedAt)
 	if !hasFreshness {
-		return configuredTTL, true
+		freshnessLifetime = configuredTTL
 	}
 	remainingFreshness := freshnessLifetime - correctedInitialAge(header, receivedAt)
 	if remainingFreshness <= 0 {
