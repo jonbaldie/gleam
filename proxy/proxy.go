@@ -281,13 +281,14 @@ func (w *cacheResponseWriter) cachedTrailer() http.Header {
 // when they are satisfied.
 func serveCachedItem(w http.ResponseWriter, r *http.Request, item *cache.CacheItem) {
 	// RFC 9110 section 13.2.2: If-None-Match, when present, takes precedence
-	// and If-Modified-Since is ignored.
+	// and If-Modified-Since is ignored. Section 13.1.3 also requires ignoring
+	// If-Modified-Since when the response would otherwise not be a 200.
 	if len(r.Header.Values("If-None-Match")) > 0 {
 		if ifNoneMatchMatches(r.Header.Values("If-None-Match"), item.Header.Get("ETag")) {
 			writeCachedNotModified(w, item)
 			return
 		}
-	} else if ifModifiedSinceSatisfied(r.Header.Values("If-Modified-Since"), item.Header.Get("Last-Modified")) {
+	} else if item.Status == http.StatusOK && ifModifiedSinceSatisfied(r.Header.Values("If-Modified-Since"), item.Header.Get("Last-Modified")) {
 		writeCachedNotModified(w, item)
 		return
 	}
