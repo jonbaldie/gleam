@@ -4,6 +4,16 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.1.6] — 2026-09-21
+
+### Fixed
+- Ignore `If-Modified-Since` for cached non-200 responses (#87, #93).
+- Subtract origin age from heuristic freshness lifetime (#88, #90).
+- Normalize `Host` header case in cache keys (#82, #85).
+- Honor qualified `Cache-Control` `private` and `no-cache` directives (#81, #84).
+- Require explicit cacheability before storing non-heuristic statuses such as 201 and 202 (#80, #83).
+- Treat invalid or zero `Expires` headers as already expired (#78).
+
 ## [v0.1.5] — 2026-09-11
 
 ### Fixed
@@ -72,3 +82,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.3]: https://github.com/jonbaldie/gleam/compare/v0.1.2...v0.1.3
 [v0.1.4]: https://github.com/jonbaldie/gleam/compare/v0.1.3...v0.1.4
 [v0.1.5]: https://github.com/jonbaldie/gleam/compare/v0.1.4...v0.1.5
+[v0.1.6]: https://github.com/jonbaldie/gleam/compare/v0.1.5...v0.1.6
