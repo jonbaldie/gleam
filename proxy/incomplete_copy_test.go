@@ -68,8 +68,8 @@ func TestProxyDoesNotCacheResponseAfterDownstreamWriteError(t *testing.T) {
 	}()
 
 	if len(c.store) != 0 {
-		for key, item := range c.store {
-			t.Fatalf("expected nothing cached after a failed copy, got key %q with %d bytes", key, len(item.Content))
+		for key, entry := range c.store {
+			t.Fatalf("expected nothing cached after a failed copy, got key %q with %d bytes", key, len(entry.item.Content))
 		}
 	}
 

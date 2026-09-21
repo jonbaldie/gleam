@@ -88,6 +88,15 @@ func encodeTime(w io.Writer, t time.Time) error {
 	return writeSized(w, timeBytes)
 }
 
+// writeReservedExpiration fills the slot that once held the entry's
+// expiration. Expiry now belongs to the backend (Redis enforces the ttl), but
+// readers from earlier versions still expect a timestamp here, so the slot is
+// kept and written as the zero time. It can be dropped in a later format
+// version once no deployment still runs a reader that expects it.
+func writeReservedExpiration(w io.Writer) error {
+	return encodeTime(w, time.Time{})
+}
+
 func validateStatus(status uint32) error {
 	if status < 100 || status > 999 {
 		return fmt.Errorf("cache item: invalid status code %d", status)
@@ -110,7 +119,7 @@ func encodeTo(w io.Writer, item cache.CacheItem) error {
 	if err := encodeHeaders(w, item.Header); err != nil {
 		return err
 	}
-	if err := encodeTime(w, item.Expiration); err != nil {
+	if err := writeReservedExpiration(w); err != nil {
 		return err
 	}
 	if err := encodeHeaders(w, item.Trailer); err != nil {
@@ -208,6 +217,13 @@ func decodeTime(r *bytes.Reader) (time.Time, error) {
 	return t, nil
 }
 
+// skipReservedExpiration reads past the slot written by
+// writeReservedExpiration, which older entries fill with a real timestamp.
+func skipReservedExpiration(r *bytes.Reader) error {
+	_, err := decodeTime(r)
+	return err
+}
+
 // decodeOptionalTail reads the fields appended to the format after its first
 // version — the trailer headers and the response time — each of which is
 // absent from entries written by an earlier version.
@@ -251,7 +267,7 @@ func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	if item.Header, err = decodeHeaders(buf); err != nil {
 		return nil, err
 	}
-	if item.Expiration, err = decodeTime(buf); err != nil {
+	if err := skipReservedExpiration(buf); err != nil {
 		return nil, err
 	}
 	if err := decodeOptionalTail(buf, item); err != nil {
