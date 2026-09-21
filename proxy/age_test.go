@@ -13,8 +13,8 @@ func backdateStoredEntries(c *mockCache, d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for _, item := range c.store {
-		item.StoredAt = item.StoredAt.Add(-d)
+	for _, entry := range c.store {
+		entry.item.StoredAt = entry.item.StoredAt.Add(-d)
 	}
 }
 

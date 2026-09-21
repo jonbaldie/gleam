@@ -23,7 +23,13 @@ var ctx = context.Background()
 // SimpleCache holds the cache data
 type SimpleCache struct {
 	mu    sync.Mutex
-	store map[string]*cache.CacheItem
+	store map[string]*simpleEntry
+}
+
+// simpleEntry pairs a stored item with the moment its ttl elapses.
+type simpleEntry struct {
+	item      *cache.CacheItem
+	expiresAt time.Time
 }
 
 // Set stores data in the cache
@@ -31,13 +37,15 @@ func (c *SimpleCache) Set(key string, item cache.CacheItem, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.store[key] = &cache.CacheItem{
-		Content:    item.Content,
-		Header:     cloneHeader(item.Header),
-		Trailer:    cloneHeader(item.Trailer),
-		Status:     item.Status,
-		Expiration: time.Now().Add(ttl),
-		StoredAt:   item.StoredAt,
+	c.store[key] = &simpleEntry{
+		item: &cache.CacheItem{
+			Content:  item.Content,
+			Header:   cloneHeader(item.Header),
+			Trailer:  cloneHeader(item.Trailer),
+			Status:   item.Status,
+			StoredAt: item.StoredAt,
+		},
+		expiresAt: time.Now().Add(ttl),
 	}
 }
 
@@ -46,15 +54,15 @@ func (c *SimpleCache) Get(key string) (*cache.CacheItem, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	item, found := c.store[key]
+	entry, found := c.store[key]
 	if !found {
 		return nil, false
 	}
-	if item.Expiration.Before(time.Now()) {
+	if entry.expiresAt.Before(time.Now()) {
 		delete(c.store, key)
 		return nil, false
 	}
-	return item, true
+	return entry.item, true
 }
 
 // InvalidatePrefix removes every entry whose key matches the given host+URI
@@ -73,7 +81,7 @@ func (c *SimpleCache) InvalidatePrefix(prefix string) {
 // NewSimpleCache initializes and returns a new SimpleCache
 func NewSimpleCache() *SimpleCache {
 	return &SimpleCache{
-		store: make(map[string]*cache.CacheItem),
+		store: make(map[string]*simpleEntry),
 	}
 }
 

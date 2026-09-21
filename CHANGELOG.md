@@ -4,6 +4,11 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- The `Cache` contract now assigns entry expiry to the backend: `Set` keeps an entry no longer than its ttl and `Get` returns only live entries. `CacheItem.Expiration` is removed; the Redis wire format keeps its slot, written as zero, so entries stay readable across versions (#97).
+
 ## [v0.1.6] — 2026-09-21
 
 ### Fixed

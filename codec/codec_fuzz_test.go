@@ -20,7 +20,7 @@ func FuzzDecodeCacheItem(f *testing.F) {
 	f.Add([]byte("AAAAAMgAAAABAAAAAAAAAP////8="))
 	hdr := http.Header{"Content-Type": {"text/plain"}}
 	codec := &BinaryCodec{}
-	if enc, err := codec.Encode(cache.CacheItem{Content: []byte("hi"), Header: hdr, Status: 200, Expiration: time.Unix(0, 0)}); err == nil {
+	if enc, err := codec.Encode(cache.CacheItem{Content: []byte("hi"), Header: hdr, Status: 200}); err == nil {
 		f.Add(enc)
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -40,7 +40,7 @@ func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 		if hkey != "" {
 			hdr.Add(hkey, hval)
 		}
-		in := cache.CacheItem{Content: []byte(body), Header: hdr, Status: status, Expiration: time.Now().Truncate(0)}
+		in := cache.CacheItem{Content: []byte(body), Header: hdr, Status: status}
 		codec := &BinaryCodec{}
 		enc, err := codec.Encode(in)
 		if err != nil {
@@ -61,16 +61,14 @@ func FuzzDecodeCacheItemWithMutations(f *testing.F) {
 	// Create some valid cache items and add their encodings
 	testCases := []cache.CacheItem{
 		{
-			Content:    []byte(""),
-			Header:     http.Header{},
-			Status:     200,
-			Expiration: time.Unix(0, 0),
+			Content: []byte(""),
+			Header:  http.Header{},
+			Status:  200,
 		},
 		{
-			Content:    []byte("hello world"),
-			Header:     http.Header{"Content-Type": {"text/plain"}},
-			Status:     200,
-			Expiration: time.Now(),
+			Content: []byte("hello world"),
+			Header:  http.Header{"Content-Type": {"text/plain"}},
+			Status:  200,
 		},
 		{
 			Content: []byte("test data"),
@@ -78,8 +76,7 @@ func FuzzDecodeCacheItemWithMutations(f *testing.F) {
 				"X-Custom-1": {"value1"},
 				"X-Custom-2": {"value2", "value3"},
 			},
-			Status:     404,
-			Expiration: time.Unix(1000000, 0),
+			Status: 404,
 		},
 	}
 
@@ -122,10 +119,9 @@ func FuzzHeaderRoundTrip(f *testing.F) {
 		}
 
 		item := cache.CacheItem{
-			Content:    []byte(content),
-			Header:     original,
-			Status:     int(status),
-			Expiration: time.Now().Truncate(time.Second),
+			Content: []byte(content),
+			Header:  original,
+			Status:  int(status),
 		}
 
 		codec := &BinaryCodec{}
@@ -174,10 +170,9 @@ func FuzzStatusCodesExhaustive(f *testing.F) {
 				return
 			}
 			item := cache.CacheItem{
-				Content:    content,
-				Header:     http.Header{},
-				Status:     int(s),
-				Expiration: time.Now(),
+				Content: content,
+				Header:  http.Header{},
+				Status:  int(s),
 			}
 			codec := &BinaryCodec{}
 			enc, err := codec.Encode(item)
@@ -208,10 +203,9 @@ func FuzzLargeContent(f *testing.F) {
 		}
 
 		item := cache.CacheItem{
-			Content:    content,
-			Header:     http.Header{"Content-Length": {string(rune(len(content)))}},
-			Status:     200,
-			Expiration: time.Now(),
+			Content: content,
+			Header:  http.Header{"Content-Length": {string(rune(len(content)))}},
+			Status:  200,
 		}
 
 		codec := &BinaryCodec{}

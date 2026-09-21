@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestEncode_InvalidStatus(t *testing.T) {
@@ -58,10 +57,9 @@ func (f *failingWriter) Write(p []byte) (int, error) {
 
 func TestEncodeTo_WriteErrors(t *testing.T) {
 	item := cache.CacheItem{
-		Content:    []byte("test"),
-		Header:     http.Header{"X-Test": {"val1", "val2"}},
-		Status:     200,
-		Expiration: time.Now().Truncate(time.Second),
+		Content: []byte("test"),
+		Header:  http.Header{"X-Test": {"val1", "val2"}},
+		Status:  200,
 	}
 
 	// Figure out total size
@@ -105,10 +103,9 @@ func TestDecode_Truncated(t *testing.T) {
 	codec := &BinaryCodec{}
 
 	item := cache.CacheItem{
-		Content:    []byte("test"),
-		Header:     http.Header{"X-Test": {"val1"}},
-		Status:     200,
-		Expiration: time.Now(),
+		Content: []byte("test"),
+		Header:  http.Header{"X-Test": {"val1"}},
+		Status:  200,
 	}
 	encoded, _ := codec.Encode(item)
 	decoded, _ := base64.StdEncoding.DecodeString(string(encoded))

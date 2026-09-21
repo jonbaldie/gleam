@@ -110,7 +110,10 @@ func encodeTo(w io.Writer, item cache.CacheItem) error {
 	if err := encodeHeaders(w, item.Header); err != nil {
 		return err
 	}
-	if err := encodeTime(w, item.Expiration); err != nil {
+	// This slot once held the entry's expiration. Expiry now belongs to the
+	// backend (Redis enforces the ttl), but readers from earlier versions
+	// still expect a timestamp here, so it is kept and written as zero.
+	if err := encodeTime(w, time.Time{}); err != nil {
 		return err
 	}
 	if err := encodeHeaders(w, item.Trailer); err != nil {
@@ -251,7 +254,8 @@ func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
 	if item.Header, err = decodeHeaders(buf); err != nil {
 		return nil, err
 	}
-	if item.Expiration, err = decodeTime(buf); err != nil {
+	// Skip the reserved expiration slot; see encodeTo.
+	if _, err = decodeTime(buf); err != nil {
 		return nil, err
 	}
 	if err := decodeOptionalTail(buf, item); err != nil {
