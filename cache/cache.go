@@ -11,7 +11,8 @@ import (
 // The backend owns entry expiry: callers pass a lifetime to Set and trust a
 // miss from Get, so every implementation must enforce it itself.
 type Cache interface {
-	// Set stores item under key and keeps it no longer than ttl.
+	// Set stores item under key and keeps it no longer than ttl. Callers pass
+	// a positive ttl: an entry with no remaining lifetime is never stored.
 	Set(key string, item CacheItem, ttl time.Duration)
 	// Get returns the entry stored under key only while it is live: once its
 	// ttl has elapsed Get must report a miss, never the expired entry.
