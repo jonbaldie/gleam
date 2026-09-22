@@ -60,6 +60,54 @@ func TestProxySuccessfulPOSTInvalidatesCachedGET(t *testing.T) {
 	}
 }
 
+// An absolute-form unsafe request has the same effective request URI as its
+// origin-form equivalent, so it must invalidate the cached representation.
+func TestProxyAbsoluteFormPOSTInvalidatesCachedGET(t *testing.T) {
+	var getCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if getCalls.Add(1) == 1 {
+				_, _ = w.Write([]byte("old"))
+				return
+			}
+			_, _ = w.Write([]byte("new"))
+		case http.MethodPost:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected origin request %s %s", r.Method, r.URL)
+		}
+	}))
+	defer origin.Close()
+
+	c := newMockCache()
+	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+
+	first := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	firstResp := httptest.NewRecorder()
+	handler.ServeHTTP(firstResp, first)
+	if body := firstResp.Body.String(); body != "old" {
+		t.Fatalf("expected first GET body %q, got %q", "old", body)
+	}
+
+	post := httptest.NewRequest(http.MethodPost, "http://example.com/resource", nil)
+	postResp := httptest.NewRecorder()
+	handler.ServeHTTP(postResp, post)
+	if postResp.Code != http.StatusNoContent {
+		t.Fatalf("expected POST status %d, got %d", http.StatusNoContent, postResp.Code)
+	}
+
+	second := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	secondResp := httptest.NewRecorder()
+	handler.ServeHTTP(secondResp, second)
+	if body := secondResp.Body.String(); body != "new" {
+		t.Fatalf("expected final GET to fetch %q after absolute-form POST, got stale %q", "new", body)
+	}
+	if got := getCalls.Load(); got != 2 {
+		t.Fatalf("expected two origin GET calls after invalidation, got %d", got)
+	}
+}
+
 // A cache key is the host+URI base plus an optional hash suffix encoding the
 // configured vary headers the request carried, so invalidation must remove
 // every variant for the URI, not just the incoming request's own key.

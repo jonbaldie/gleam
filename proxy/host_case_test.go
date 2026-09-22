@@ -157,34 +157,40 @@ func TestCacheBaseKeyNormalizesHostCase(t *testing.T) {
 		wantSame bool
 	}{
 		{
-			name: "host difference in case produces same key",
-			req1: &http.Request{Host: "EXAMPLE.COM", URL: &url.URL{Path: "/resource"}},
-			req2: &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource"}},
+			name:     "host difference in case produces same key",
+			req1:     &http.Request{Host: "EXAMPLE.COM", URL: &url.URL{Path: "/resource"}},
+			req2:     &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource"}},
 			wantSame: true,
 		},
 		{
-			name: "host with port difference in case produces same key",
-			req1: &http.Request{Host: "EXAMPLE.COM:8080", URL: &url.URL{Path: "/resource"}},
-			req2: &http.Request{Host: "example.com:8080", URL: &url.URL{Path: "/resource"}},
+			name:     "host with port difference in case produces same key",
+			req1:     &http.Request{Host: "EXAMPLE.COM:8080", URL: &url.URL{Path: "/resource"}},
+			req2:     &http.Request{Host: "example.com:8080", URL: &url.URL{Path: "/resource"}},
 			wantSame: true,
 		},
 		{
-			name: "ipv6 host difference in hex case produces same key",
-			req1: &http.Request{Host: "[2001:DB8::1]:8080", URL: &url.URL{Path: "/resource"}},
-			req2: &http.Request{Host: "[2001:db8::1]:8080", URL: &url.URL{Path: "/resource"}},
+			name:     "ipv6 host difference in hex case produces same key",
+			req1:     &http.Request{Host: "[2001:DB8::1]:8080", URL: &url.URL{Path: "/resource"}},
+			req2:     &http.Request{Host: "[2001:db8::1]:8080", URL: &url.URL{Path: "/resource"}},
 			wantSame: true,
 		},
 		{
-			name: "path case difference produces different key",
-			req1: &http.Request{Host: "example.com", URL: &url.URL{Path: "/RESOURCE"}},
-			req2: &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource"}},
+			name:     "path case difference produces different key",
+			req1:     &http.Request{Host: "example.com", URL: &url.URL{Path: "/RESOURCE"}},
+			req2:     &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource"}},
 			wantSame: false,
 		},
 		{
-			name: "query case difference produces different key",
-			req1: &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource", RawQuery: "PARAM=1"}},
-			req2: &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource", RawQuery: "param=1"}},
+			name:     "query case difference produces different key",
+			req1:     &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource", RawQuery: "PARAM=1"}},
+			req2:     &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource", RawQuery: "param=1"}},
 			wantSame: false,
+		},
+		{
+			name:     "origin and absolute form produce the same key",
+			req1:     &http.Request{Host: "example.com", URL: &url.URL{Path: "/resource", RawQuery: "param=1"}},
+			req2:     &http.Request{Host: "example.com", URL: &url.URL{Scheme: "http", Host: "example.com", Path: "/resource", RawQuery: "param=1"}},
+			wantSame: true,
 		},
 	}
 
