@@ -814,10 +814,12 @@ func cloneHeader(header http.Header) http.Header {
 }
 
 // cacheBaseKey is the host+URI portion shared by a URI's exact cache key and
-// every vary-variant key derived from it. RFC 9110 section 4.2.3 requires the
-// host component of the target URI authority to be normalized to lowercase.
+// every vary-variant key derived from it. RequestURI keeps origin-form and
+// absolute-form targets for the same effective request URI on the same key.
+// RFC 9110 section 4.2.3 requires the host component of the target URI
+// authority to be normalized to lowercase.
 func cacheBaseKey(r *http.Request) string {
-	return strings.ToLower(r.Host) + "#" + r.URL.String()
+	return strings.ToLower(r.Host) + "#" + r.URL.RequestURI()
 }
 
 // Include configured request headers in the cache key so one caller's GET
