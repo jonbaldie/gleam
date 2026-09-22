@@ -37,9 +37,15 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 
 // serveGet answers a GET from the cache when possible, and otherwise forwards
 // it to the origin, storing the response when it is both storable and copied
-// through to the client in full.
+// through to the client in full. An only-if-cached request gets a 504 when no
+// reusable response can satisfy it instead of being forwarded.
 func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
+	onlyIfCached := requestHasOnlyIfCached(r)
 	if requestBypassesCache(r) {
+		if onlyIfCached {
+			w.WriteHeader(http.StatusGatewayTimeout)
+			return
+		}
 		p.ServeHTTP(w, r)
 		return
 	}
@@ -52,6 +58,10 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 	if cachedItem, found := reusableCachedItem(c, cacheKey, authenticated); found {
 		serveCachedItem(w, r, cachedItem)
+		return
+	}
+	if onlyIfCached {
+		w.WriteHeader(http.StatusGatewayTimeout)
 		return
 	}
 
@@ -533,6 +543,10 @@ func isUpgradeRequest(r *http.Request) bool {
 
 func requestRequiresRevalidation(r *http.Request) bool {
 	return cacheControlHasDirective(r.Header, "no-cache")
+}
+
+func requestHasOnlyIfCached(r *http.Request) bool {
+	return cacheControlHasDirective(r.Header, "only-if-cached")
 }
 
 func requestForbidsStorage(r *http.Request) bool {
