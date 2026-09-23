@@ -4,10 +4,14 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [v0.1.7] — 2026-09-24
+
+### Fixed
+- Respond with 504 Gateway Timeout for unsatisfied `only-if-cached` requests without contacting origin (#101, #103).
+- Normalize absolute-form request targets so unsafe requests invalidate cached responses correctly (#100, #102).
 
 ### Changed
-- The `Cache` contract now assigns entry expiry to the backend: `Set` keeps an entry no longer than its ttl and `Get` returns only live entries. `CacheItem.Expiration` is removed; the Redis wire format keeps its slot, written as zero, so entries stay readable across versions (#97).
+- The `Cache` contract now assigns entry expiry to the backend: `Set` keeps an entry no longer than its ttl and `Get` returns only live entries. `CacheItem.Expiration` is removed; the Redis wire format keeps its slot, written as zero, so entries stay readable across versions (#97, #99).
 
 ## [v0.1.6] — 2026-09-21
 
@@ -88,3 +92,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.4]: https://github.com/jonbaldie/gleam/compare/v0.1.3...v0.1.4
 [v0.1.5]: https://github.com/jonbaldie/gleam/compare/v0.1.4...v0.1.5
 [v0.1.6]: https://github.com/jonbaldie/gleam/compare/v0.1.5...v0.1.6
+[v0.1.7]: https://github.com/jonbaldie/gleam/compare/v0.1.6...v0.1.7
