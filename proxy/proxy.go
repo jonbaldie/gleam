@@ -291,10 +291,11 @@ func (w *cacheResponseWriter) cachedTrailer() http.Header {
 // when they are satisfied.
 func serveCachedItem(w http.ResponseWriter, r *http.Request, item *cache.CacheItem) {
 	// RFC 9110 section 13.2.2: If-None-Match, when present, takes precedence
-	// and If-Modified-Since is ignored. Section 13.1.3 also requires ignoring
-	// If-Modified-Since when the response would otherwise not be a 200.
+	// and If-Modified-Since is ignored. A 304 stands in for a 200 (section
+	// 15.4.5), so neither validator may yield 304 for a cached non-200; the
+	// stored representation is served in full instead.
 	if len(r.Header.Values("If-None-Match")) > 0 {
-		if ifNoneMatchMatches(r.Header.Values("If-None-Match"), item.Header.Get("ETag")) {
+		if item.Status == http.StatusOK && ifNoneMatchMatches(r.Header.Values("If-None-Match"), item.Header.Get("ETag")) {
 			writeCachedNotModified(w, item)
 			return
 		}
