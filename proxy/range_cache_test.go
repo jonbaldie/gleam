@@ -13,7 +13,7 @@ import (
 // the range request is later served to a full GET.
 func TestBugHuntRangeResponseSharesFullResponseKey(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		if r.Header.Get("Range") != "" {
 			w.Header().Set("Content-Range", "bytes 0-3/10")
@@ -22,11 +22,10 @@ func TestBugHuntRangeResponseSharesFullResponseKey(t *testing.T) {
 			return
 		}
 		_, _ = w.Write([]byte("0123456789"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	rangeReq := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	rangeReq.Header.Set("Range", "bytes=0-3")

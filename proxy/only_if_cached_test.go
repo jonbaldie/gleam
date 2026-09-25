@@ -12,13 +12,12 @@ import (
 
 func TestProxyOnlyIfCachedMissReturnsGatewayTimeout(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		http.Error(w, "origin should not receive only-if-cached miss", http.StatusInternalServerError)
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 	req := httptest.NewRequest(http.MethodGet, "/nothing-cached", nil)
 	req.Header.Set("Cache-Control", "only-if-cached")
 	rec := httptest.NewRecorder()
@@ -35,14 +34,13 @@ func TestProxyOnlyIfCachedMissReturnsGatewayTimeout(t *testing.T) {
 
 func TestProxyOnlyIfCachedHitUsesCachedResponse(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("Cache-Control", "max-age=60")
 		_, _ = w.Write([]byte("cached response"))
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/cached", nil))
 	if first.Code != http.StatusOK || first.Body.String() != "cached response" {
@@ -67,14 +65,13 @@ func TestProxyOnlyIfCachedHitUsesCachedResponse(t *testing.T) {
 
 func TestProxyOnlyIfCachedExpiredEntryReturnsGatewayTimeout(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		http.Error(w, "origin should not receive expired only-if-cached entry", http.StatusInternalServerError)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 	req := httptest.NewRequest(http.MethodGet, "/expired", nil)
 	req.Header.Set("Cache-Control", "only-if-cached")
 	c.Set(cacheKeyForRequest(req), cache.CacheItem{
@@ -95,14 +92,13 @@ func TestProxyOnlyIfCachedExpiredEntryReturnsGatewayTimeout(t *testing.T) {
 
 func TestProxyOnlyIfCachedUnauthorizedEntryReturnsGatewayTimeout(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("Cache-Control", "max-age=60")
 		_, _ = w.Write([]byte("shared response"))
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandlerWithVaryHeaders(t, origin.URL, newMockCache(), time.Minute, []string{"Cookie"})
+	handler := mustCachingProxyHandlerWithVaryHeaders(t, origin, newMockCache(), time.Minute, []string{"Cookie"})
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/authorized", nil))
 
@@ -122,13 +118,12 @@ func TestProxyOnlyIfCachedUnauthorizedEntryReturnsGatewayTimeout(t *testing.T) {
 
 func TestProxyOnlyIfCachedRangeRequestReturnsGatewayTimeout(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		_, _ = w.Write([]byte("full response"))
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/range", nil))
 

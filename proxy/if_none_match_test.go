@@ -30,18 +30,19 @@ func TestBugHuntIfNoneMatchIgnoredForNon200CachedResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var originCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				originCalls.Add(1)
 				w.Header().Set("ETag", etag)
 				if tt.cacheControl != "" {
 					w.Header().Set("Cache-Control", tt.cacheControl)
 				}
 				w.WriteHeader(tt.status)
-				_, _ = w.Write([]byte(tt.body))
-			}))
-			defer origin.Close()
+				if tt.body != "" {
+					_, _ = w.Write([]byte(tt.body))
+				}
+			})
 
-			handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)

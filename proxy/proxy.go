@@ -23,15 +23,17 @@ func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
 }
 
 func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
-	p := httputil.NewSingleHostReverseProxy(origin)
+	return NewHandler(httputil.NewSingleHostReverseProxy(origin), c, ttl, varyHeaders)
+}
 
+func NewHandler(upstream http.Handler, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			serveGet(p, c, w, r, varyHeaders, ttl)
+			serveGet(upstream, c, w, r, varyHeaders, ttl)
 			return
 		}
 
-		serveNonGet(p, c, w, r)
+		serveNonGet(upstream, c, w, r)
 	})
 }
 
@@ -39,14 +41,14 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 // it to the origin, storing the response when it is both storable and copied
 // through to the client in full. An only-if-cached request gets a 504 when no
 // reusable response can satisfy it instead of being forwarded.
-func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
+func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
 	onlyIfCached := requestHasOnlyIfCached(r)
 	if requestBypassesCache(r) {
 		if onlyIfCached {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
-		p.ServeHTTP(w, r)
+		upstream.ServeHTTP(w, r)
 		return
 	}
 
@@ -66,7 +68,7 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	}
 
 	crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
-	p.ServeHTTP(crw, r)
+	upstream.ServeHTTP(crw, r)
 	// Reaching here means the reverse proxy returned normally; an abnormal
 	// unwind (http.ErrAbortHandler on a copy error) skips this, and so skips
 	// storage too.
@@ -124,9 +126,9 @@ func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, var
 // serveNonGet forwards a non-GET request to the origin and, when the method
 // is unsafe and the response is non-error, invalidates every stored entry
 // for the target URI (RFC 9111 section 4.4).
-func serveNonGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request) {
+func serveNonGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *http.Request) {
 	srw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
-	p.ServeHTTP(srw, r)
+	upstream.ServeHTTP(srw, r)
 
 	if isUnsafeMethod(r.Method) && isNonErrorResponse(srw.status) {
 		c.InvalidatePrefix(cacheBaseKey(r))
