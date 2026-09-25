@@ -16,16 +16,15 @@ func TestBugHuntIfModifiedSinceOnCacheHitIsIgnored(t *testing.T) {
 	const lastModified = "Thu, 10 Sep 2026 03:58:45 GMT"
 
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("Last-Modified", lastModified)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("body"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -60,15 +59,14 @@ func TestBugHuntMultiValueIfModifiedSinceIsIgnored(t *testing.T) {
 	const lastModified = "Thu, 10 Sep 2026 00:00:00 GMT"
 
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("Last-Modified", lastModified)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("body"))
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -171,7 +169,7 @@ func TestProxyConditionalGETWithIfModifiedSince(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var originCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				originCalls.Add(1)
 				if tt.lastModified != "" {
 					w.Header().Set("Last-Modified", tt.lastModified)
@@ -181,10 +179,9 @@ func TestProxyConditionalGETWithIfModifiedSince(t *testing.T) {
 				}
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("body"))
-			}))
-			defer origin.Close()
+			})
 
-			handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -267,18 +264,19 @@ func TestBugHuntIfModifiedSinceIgnoredForNon200CachedResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var originCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				originCalls.Add(1)
 				w.Header().Set("Last-Modified", lastModified)
 				if tt.cacheControl != "" {
 					w.Header().Set("Cache-Control", tt.cacheControl)
 				}
 				w.WriteHeader(tt.status)
-				_, _ = w.Write([]byte(tt.body))
-			}))
-			defer origin.Close()
+				if tt.body != "" {
+					_, _ = w.Write([]byte(tt.body))
+				}
+			})
 
-			handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)

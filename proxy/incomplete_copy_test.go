@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,21 +39,15 @@ func (w *failingWriter) Write(b []byte) (int, error) {
 func TestProxyDoesNotCacheResponseAfterDownstreamWriteError(t *testing.T) {
 	body := bytes.Repeat([]byte("a"), 64*1024)
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
-	}))
-	defer origin.Close()
-
-	originURL, err := url.Parse(origin.URL)
-	if err != nil {
-		t.Fatalf("failed to parse origin URL: %v", err)
-	}
+	})
 
 	c := newMockCache()
-	handler := New(originURL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	func() {
 		defer func() {

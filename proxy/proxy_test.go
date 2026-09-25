@@ -48,15 +48,14 @@ func TestProxyDoesNotCacheUnfreshSuccessfulStatusCodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var originCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				call := originCalls.Add(1)
 				w.WriteHeader(tt.status)
 				_, _ = fmt.Fprintf(w, "%s-%d", tt.body, call)
-			}))
-			defer origin.Close()
+			})
 
 			c := newMockCache()
-			handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 
 			first := httptest.NewRecorder()
@@ -88,7 +87,7 @@ func TestProxyDoesNotCacheUnfreshSuccessfulStatusCodes(t *testing.T) {
 
 func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := originCalls.Add(1)
 		if call == 1 {
 			http.Error(w, "temporary failure", http.StatusBadGateway)
@@ -97,11 +96,10 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("recovered"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/flaky", nil)
@@ -133,15 +131,14 @@ func TestProxyDoesNotCacheTransientFailures(t *testing.T) {
 
 func TestProxySeparatesCachedGetsByAuthorizationHeader(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
 	firstRequest.Header.Set("Authorization", "Bearer alpha")
@@ -166,18 +163,17 @@ func TestProxySeparatesCachedGetsByAuthorizationHeader(t *testing.T) {
 
 func TestProxyCachesEquivalentGetsWithSameAuthorizationHeader(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		// Authenticated requests only reuse responses that permit shared
 		// caching explicitly (RFC 9111 section 3.5).
 		w.Header().Set("Cache-Control", "public")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
 	firstRequest.Header.Set("Authorization", "Bearer alpha")
@@ -199,19 +195,14 @@ func TestProxyCachesEquivalentGetsWithSameAuthorizationHeader(t *testing.T) {
 
 func TestProxySeparatesCachedGetsByConfiguredVaryHeader(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(r.Header.Get("X-Tenant")))
-	}))
-	defer origin.Close()
+	})
 
-	originURL, err := url.Parse(origin.URL)
-	if err != nil {
-		t.Fatalf("parse origin URL: %v", err)
-	}
 	c := newMockCache()
-	handler := NewWithVaryHeaders(originURL, c, time.Minute, []string{"X-Tenant"})
+	handler := mustCachingProxyHandlerWithVaryHeaders(t, origin, c, time.Minute, []string{"X-Tenant"})
 
 	firstRequest := httptest.NewRequest(http.MethodGet, "/profile", nil)
 	firstRequest.Header.Set("X-Tenant", "alpha")
@@ -234,39 +225,26 @@ func TestProxySeparatesCachedGetsByConfiguredVaryHeader(t *testing.T) {
 	}
 }
 
-func mustCachingProxyHandler(t *testing.T, originURL string, c cache.Cache, ttl time.Duration) http.Handler {
+func mustCachingProxyHandler(t *testing.T, upstream http.HandlerFunc, c cache.Cache, ttl time.Duration) http.Handler {
 	t.Helper()
-
-	origin, err := url.Parse(originURL)
-	if err != nil {
-		t.Fatalf("parse origin URL: %v", err)
-	}
-
-	return New(origin, c, ttl)
+	return NewHandler(upstream, c, ttl, defaultVaryHeaders)
 }
 
-func mustCachingProxyHandlerWithVaryHeaders(t *testing.T, originURL string, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
+func mustCachingProxyHandlerWithVaryHeaders(t *testing.T, upstream http.HandlerFunc, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
 	t.Helper()
-
-	origin, err := url.Parse(originURL)
-	if err != nil {
-		t.Fatalf("parse origin URL: %v", err)
-	}
-
-	return NewWithVaryHeaders(origin, c, ttl, varyHeaders)
+	return NewHandler(upstream, c, ttl, varyHeaders)
 }
 
 // TestProxyDoesNotCacheStatus300 kills gleam.go:47 (expression/comparison changes
 // crw.status < 300 to crw.status <= 300, causing status-300 responses to be cached).
 func TestProxyDoesNotCacheStatus300(t *testing.T) {
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMultipleChoices)
 		_, _ = w.Write([]byte("choose"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/page", nil)
@@ -286,16 +264,15 @@ func TestProxyDoesNotCacheStatus300(t *testing.T) {
 //
 // All three produce a cache-hit response that is missing the upstream response headers.
 func TestProxyCopiesAllResponseHeadersOnCacheHit(t *testing.T) {
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Custom-Header", "sentinel-value")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api", nil))
@@ -316,16 +293,15 @@ func TestProxyCopiesAllResponseHeadersOnCacheHit(t *testing.T) {
 
 func TestBugHuntConditionalGETDoesNotProduceNotModifiedResponse(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header().Set("ETag", `"version-1"`)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("body"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -424,17 +400,16 @@ func TestProxyConditionalGETOnCacheHit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var originCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				originCalls.Add(1)
 				if tt.etag != "" {
 					w.Header().Set("ETag", tt.etag)
 				}
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("body"))
-			}))
-			defer origin.Close()
+			})
 
-			handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -605,25 +580,12 @@ func TestCacheResponseWriterDefaultsToStatusOK(t *testing.T) {
 }
 
 func TestCacheResponseWriterSubOKStatusIsNotCacheable(t *testing.T) {
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hj, ok := w.(http.Hijacker)
-		if !ok {
-			t.Error("expected hijacker")
-			return
-		}
-		conn, buf, err := hj.Hijack()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer conn.Close()
-		_, _ = buf.WriteString("HTTP/1.1 199 Custom Status\r\nContent-Length: 0\r\n\r\n")
-		_ = buf.Flush()
-	}))
-	defer origin.Close()
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(199)
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/informational", nil)
@@ -711,16 +673,15 @@ func BenchmarkCacheKeyForRequestDefaultVaryHeadersManyUnrelatedHeaders(b *testin
 }
 
 func TestProxyCachedTrailersRemainTrailers(t *testing.T) {
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Trailer", "X-Origin-Trailer")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("body"))
 		w.Header().Set("X-Origin-Trailer", "done")
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -753,16 +714,15 @@ func TestProxyCachedTrailersRemainTrailers(t *testing.T) {
 
 func TestBugHuntUnannouncedTrailerIsDroppedFromCache(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls.Add(1)
 		w.Header()[http.TrailerPrefix+"X-Unannounced-Trailer"] = []string{"done"}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("body"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -820,7 +780,11 @@ func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
 	defer origin.Close()
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	originURL, err := url.Parse(origin.URL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+	handler := New(originURL, c, time.Minute)
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -844,15 +808,14 @@ func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
 
 func TestProxyDoesNotStoreNoStoreResponses(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = fmt.Fprintf(w, "response-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/secret", nil)
 	first := httptest.NewRecorder()
@@ -871,15 +834,14 @@ func TestProxyDoesNotStoreNoStoreResponses(t *testing.T) {
 
 func TestBugHuntResponsePrivateIsStored(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Cache-Control", "private")
 		_, _ = fmt.Fprintf(w, "private-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/account", nil)
 	first := httptest.NewRecorder()
@@ -898,15 +860,14 @@ func TestBugHuntResponsePrivateIsStored(t *testing.T) {
 
 func TestBugHuntResponseNoCacheIsReused(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = fmt.Fprintf(w, "no-cache-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/fresh", nil)
 	first := httptest.NewRecorder()
@@ -928,15 +889,14 @@ func TestBugHuntResponseNoCacheIsReused(t *testing.T) {
 
 func TestProxyDoesNotReuseImmediatelyStaleResponse(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Cache-Control", "max-age=0")
 		_, _ = fmt.Fprintf(w, "body-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 
 	first := httptest.NewRecorder()
@@ -957,15 +917,14 @@ func TestProxyDoesNotReuseImmediatelyStaleResponse(t *testing.T) {
 
 func TestBugHuntSetCookieResponseIsStored(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Set-Cookie", fmt.Sprintf("session=%d; Path=/", call))
 		_, _ = fmt.Fprintf(w, "cookie-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	first := httptest.NewRecorder()
@@ -987,14 +946,13 @@ func TestBugHuntSetCookieResponseIsStored(t *testing.T) {
 
 func TestProxyRequestNoCacheRevalidatesEveryTime(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		_, _ = fmt.Fprintf(w, "response-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	req.Header.Set("Cache-Control", "no-cache")
@@ -1014,14 +972,13 @@ func TestProxyRequestNoCacheRevalidatesEveryTime(t *testing.T) {
 
 func TestBugHuntRequestNoStoreBypassesAndDoesNotPopulateCache(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		_, _ = fmt.Fprintf(w, "response-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	noStore := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	noStore.Header.Set("Cache-Control", "no-store")
@@ -1053,15 +1010,14 @@ func TestBugHuntRequestNoStoreBypassesAndDoesNotPopulateCache(t *testing.T) {
 
 func TestProxyDoesNotReuseVaryStarResponses(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Vary", "*")
 		_, _ = fmt.Fprintf(w, "response-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	first := httptest.NewRecorder()
@@ -1080,17 +1036,16 @@ func TestProxyDoesNotReuseVaryStarResponses(t *testing.T) {
 
 func TestProxyDoesNotCacheResponsesWithUnconfiguredVaryHeaders(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Vary", "X-Custom")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = fmt.Fprintf(w, "response-%s-%d", r.Header.Get("X-Custom"), call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
 	// Handler uses default vary headers (Authorization, Cookie), which does not include X-Custom
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	req1.Header.Set("X-Custom", "alpha")
@@ -1115,16 +1070,15 @@ func TestProxyDoesNotCacheResponsesWithUnconfiguredVaryHeaders(t *testing.T) {
 
 func TestProxyCachesResponsesWithConfiguredVaryHeaders(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.Header().Set("Vary", "Cookie")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = fmt.Fprintf(w, "cookie-%s-%d", r.Header.Get("Cookie"), call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	req1.Header.Set("Cookie", "session=alpha")
@@ -1158,17 +1112,16 @@ func TestProxyCachesResponsesWithConfiguredVaryHeaders(t *testing.T) {
 
 func TestProxyCachesResponsesWithCaseInsensitiveVaryHeaders(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Vary", "cookie, AUTHORIZATION")
 		w.Header().Set("Cache-Control", "public")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("ok"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	req.Header.Set("Cookie", "session=alpha")
@@ -1187,17 +1140,16 @@ func TestProxyCachesResponsesWithCaseInsensitiveVaryHeaders(t *testing.T) {
 
 func TestProxyDoesNotCacheResponsesWithPartiallyUnconfiguredVaryHeaders(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		// Cookie is configured, but X-Extra is unconfigured
 		w.Header().Set("Vary", "Cookie, X-Extra")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("response"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	req.Header.Set("Cookie", "session=alpha")
@@ -1216,17 +1168,16 @@ func TestProxyDoesNotCacheResponsesWithPartiallyUnconfiguredVaryHeaders(t *testi
 
 func TestProxyDoesNotCacheResponsesWithMultipleVaryHeadersContainingUnconfigured(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Add("Vary", "Cookie")
 		w.Header().Add("Vary", "X-Custom")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("multi-vary"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	rec1 := httptest.NewRecorder()
@@ -1242,16 +1193,15 @@ func TestProxyDoesNotCacheResponsesWithMultipleVaryHeadersContainingUnconfigured
 
 func TestProxyDoesNotCacheResponsesWithVaryStarCombinedWithConfigured(t *testing.T) {
 	var calls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Vary", "Cookie, *")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("vary-star-combined"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	rec1 := httptest.NewRecorder()
@@ -1690,7 +1640,11 @@ func TestProxyStreamingGetFlushesFirstChunk(t *testing.T) {
 	defer origin.Close()
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	originURL, err := url.Parse(origin.URL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+	handler := New(originURL, c, time.Minute)
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
