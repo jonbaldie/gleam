@@ -682,6 +682,13 @@ func responseFreshnessLifetime(header http.Header, receivedAt time.Time) (time.D
 	}
 
 	if len(header.Values("Expires")) > 0 {
+		if len(header.Values("Expires")) > 1 {
+			// RFC 9111 section 5.3: a response with more than one Expires
+			// header field has an invalid date format and MUST be treated as
+			// already expired.
+			return 0, true
+		}
+
 		referenceTime := receivedAt
 		if date, dateOK := parseHTTPDate(header.Get("Date")); dateOK {
 			referenceTime = date
