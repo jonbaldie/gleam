@@ -1,0 +1,31 @@
+2026/09/26 02:26:59 Gleam started with Origin: http://127.0.0.1:19200, TTL: 5m0s, Port: 18403
+2026/09/26 02:27:00 Received request: GET /asset
+gc 1 @0.962s 0%: 0.042+1.2+0.006 ms clock, 0.33+0/0.47/1.0+0.053 ms cpu, 4->4->3 MB, 4 MB goal, 0 MB stacks, 0 MB globals, 8 P
+gc 2 @0.964s 0%: 0.040+1.0+0.016 ms clock, 0.32+0/0.16/0.92+0.13 ms cpu, 7->7->6 MB, 7 MB goal, 0 MB stacks, 0 MB globals, 8 P
+2026/09/26 02:27:00 Received request: GET /asset
+gc 3 @0.989s 0%: 0.039+1.2+0.006 ms clock, 0.31+0/0.28/1.1+0.054 ms cpu, 14->14->10 MB, 14 MB goal, 0 MB stacks, 0 MB globals, 8 P
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+gc 4 @1.023s 0%: 0.032+0.27+0.013 ms clock, 0.25+0/0.37/0.16+0.11 ms cpu, 20->20->13 MB, 20 MB goal, 0 MB stacks, 0 MB globals, 8 P
+2026/09/26 02:27:00 Received request: GET /asset
+gc 5 @1.042s 0%: 0.061+0.91+0.006 ms clock, 0.49+0/1.0/0.073+0.054 ms cpu, 28->28->22 MB, 28 MB goal, 0 MB stacks, 0 MB globals, 8 P
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+gc 6 @1.099s 0%: 0.11+0.44+0.028 ms clock, 0.95+0/0.29/0.46+0.23 ms cpu, 44->44->32 MB, 44 MB goal, 0 MB stacks, 0 MB globals, 8 P
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+gc 7 @1.257s 0%: 0.086+1.1+0.060 ms clock, 0.69+0/1.2/0.011+0.48 ms cpu, 66->66->50 MB, 66 MB goal, 0 MB stacks, 0 MB globals, 8 P
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+gc 8 @1.380s 0%: 0.081+1.0+0.007 ms clock, 0.65+0/1.1/0.20+0.059 ms cpu, 103->103->76 MB, 103 MB goal, 0 MB stacks, 0 MB globals, 8 P
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+2026/09/26 02:27:00 Received request: GET /asset
+GC forced
+gc 9 @151.618s 0%: 0.78+6.3+0.011 ms clock, 6.3+0/10/0+0.095 ms cpu, 102->102->87 MB, 152 MB goal, 0 MB stacks, 0 MB globals, 8 P

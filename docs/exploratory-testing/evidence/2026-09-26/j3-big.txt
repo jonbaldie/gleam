@@ -1,0 +1,6 @@
+== big body
+rss before:   8256 KB
+big code=200 size=67108864 age= t=0.116686
+big code=200 size=67108864 age=0 t=0.022292
+big code=200 size=67108864 age=0 t=0.022764
+rss after: 176800 KB

@@ -1,0 +1,15 @@
+2026/09/26 02:22:26 Gleam started with Origin: http://127.0.0.1:19000, TTL: 5m0s, Port: 18201
+2026/09/26 02:22:27 Received request: GET /page
+2026/09/26 02:22:28 Received request: GET /page
+2026/09/26 02:22:28 failed to write cache item for key "localhost:18201#/page": dial tcp [::1]:16379: connect: connection refused
+2026/09/26 02:22:28 Received request: GET /page
+2026/09/26 02:22:28 failed to write cache item for key "localhost:18201#/page": dial tcp [::1]:16379: connect: connection refused
+2026/09/26 02:22:28 Received request: POST /page
+2026/09/26 02:22:28 failed to enumerate cache keys to invalidate "localhost:18201#/page": dial tcp [::1]:16379: connect: connection refused
+2026/09/26 02:22:29 Received request: GET /page
+2026/09/26 02:22:29 Received request: GET /page
+2026/09/26 02:22:38 Received request: GET /page
+2026/09/26 02:22:38 Received request: POST /page
+2026/09/26 02:22:38 Received request: POST /page
+2026/09/26 02:22:38 Received request: POST /page
+2026/09/26 02:22:38 Received request: GET /page

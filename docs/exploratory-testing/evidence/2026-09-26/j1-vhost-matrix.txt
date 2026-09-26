@@ -1,0 +1,5 @@
+https://example.com direct=200 via-gleam=403
+https://go.dev direct=200 via-gleam=404
+https://pages.github.com direct=200 via-gleam=404
+https://www.wikipedia.org direct=200 via-gleam=400
+https://docs.github.com direct=302 via-gleam=421
