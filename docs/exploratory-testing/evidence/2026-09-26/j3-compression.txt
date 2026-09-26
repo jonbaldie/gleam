@@ -1,0 +1,9 @@
+== default config, browser Accept-Encoding, Vary: Accept-Encoding origin
+code=200 age= ce=gzip hit=1
+code=200 age= ce=gzip hit=2
+== CACHE_VARY_HEADERS incl Accept-Encoding
+br-client code=200 age= ce=gzip hit=3
+br-client code=200 age=0 ce=gzip hit=3
+no-AE client code=200 age= ce= hit=4 size=5014
+no-AE client code=200 age=0 ce= hit=4 size=5014
+body-plain.bin: HTML document text, ASCII text, with very long lines (5013)

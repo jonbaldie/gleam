@@ -1,0 +1,30 @@
+$ TTL_MINUTES=abc PORT=18110
+2026/09/26 02:22:03 error parsing TTL_MINUTES: strconv.Atoi: parsing "abc": invalid syntax
+exit=1
+$ TTL_MINUTES=0 PORT=18110
+2026/09/26 02:22:03 invalid TTL_MINUTES 0: must be greater than 0
+exit=1
+$ TTL_MINUTES=-5 PORT=18110
+2026/09/26 02:22:03 invalid TTL_MINUTES -5: must be greater than 0
+exit=1
+$ CACHE_TYPE=Redis PORT=18110
+2026/09/26 02:22:03 invalid CACHE_TYPE, must be 'memory' (default) or 'redis'
+exit=1
+$ ORIGIN_URL=example.com PORT=18110
+2026/09/26 02:22:03 invalid ORIGIN_URL "example.com": must include http or https scheme
+exit=1
+$ ORIGIN_URL=http:// PORT=18110
+2026/09/26 02:22:03 invalid ORIGIN_URL "http://": host is required
+exit=1
+$ PORT=notaport
+2026/09/26 02:22:03 Gleam started with Origin: https://httpbin.org, TTL: 5m0s, Port: notaport
+2026/09/26 02:22:03 listen tcp: lookup tcp/notaport: unknown port
+exit=1
+$ PORT=99999
+2026/09/26 02:22:04 Gleam started with Origin: https://httpbin.org, TTL: 5m0s, Port: 99999
+2026/09/26 02:22:04 listen tcp: address 99999: invalid port
+exit=1
+$ CACHE_TYPE=redis REDIS_URL=notaurl PORT=18110
+2026/09/26 02:22:04 Gleam started with Origin: https://httpbin.org, TTL: 5m0s, Port: 18110
+2026/09/26 02:22:04 Failed to parse Redis URL: redis: invalid URL scheme: 
+exit=1

@@ -66,6 +66,10 @@ This is one of my favourite features of Gleam. By setting `CACHE_TYPE=redis` and
 
 This uses [version 8](https://github.com/redis/go-redis) of `go-redis` so if you are having trouble setting your Redis URL, use their documentation [here](https://github.com/redis/go-redis?tab=readme-ov-file#connecting-via-a-redis-url).
 
+## Exploratory testing
+
+Reports from hands-on testing passes, with replay steps and evidence, live in [`docs/exploratory-testing/`](docs/exploratory-testing/). Latest: [2026-09-26](docs/exploratory-testing/2026-09-26-exploratory-testing.md).
+
 ## Naming
 
 I like Varnish but the configuration for it is a nightmare, and much of the documentation is decades old. Gleam intends to take on much of the critical functionality with a much easier configuration experience. 

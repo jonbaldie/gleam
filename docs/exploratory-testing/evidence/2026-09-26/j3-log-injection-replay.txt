@@ -1,0 +1,10 @@
+run1:
+2026/09/26 02:23:31 Gleam started with Origin: http://127.0.0.1:19100, TTL: 5m0s, Port: 18310
+2026/09/26 02:23:32 Received request: GET /ok
+forged-line^M
+another
+run2:
+2026/09/26 02:23:32 Gleam started with Origin: http://127.0.0.1:19100, TTL: 5m0s, Port: 18310
+2026/09/26 02:23:33 Received request: GET /ok
+forged-line^M
+another

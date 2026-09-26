@@ -1,0 +1,9 @@
+A after restart: Age: 9
+/page hit 3
+A during redis outage: /page hit 4
+ code=200 t=0.150604
+A during outage again: /page hit 5
+ code=200 t=0.169586
+POST during outage: code=204 t=0.103238
+A after redis back (miss): /page hit 6
+A after redis back (hit): /page hit 6

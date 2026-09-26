@@ -1,0 +1,15 @@
+== browser revalidation on cold cache (If-None-Match on miss)
+cold INM code=304 age= hit=1
+plain GET code=200 age= hit=2
+plain GET code=200 age=0 hit=2
+warm INM code=304 age=0 hit=2
+== HEAD after cached GET
+HTTP/1.1 200 OK
+Content-Length: 10
+Server: BaseHTTP/0.6 Python/3.14.5
+X-Origin-Hit: 3
+== ORIGIN_URL with path prefix /api
+/api/page hit 1
+ORIGIN GET /api/page host=localhost:18303 ae=gzip inm=None
+== log line for encoded newline path
+code=200

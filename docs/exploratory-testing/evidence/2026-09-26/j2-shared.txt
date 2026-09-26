@@ -1,0 +1,10 @@
+A1: /page hit 1
+A2: /page hit 1
+B1 (other instance, same Host? no): /page hit 2
+B2 with Host localhost:18201: /page hit 1
+keys:
+localhost:18202#/page
+localhost:18201#/page
+POST via B with Host localhost:18201: 204
+A3 after invalidation via B: /page hit 3
+ttl: 299292
