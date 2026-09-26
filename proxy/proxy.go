@@ -24,6 +24,13 @@ func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
 
 func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
 	p := httputil.NewSingleHostReverseProxy(origin)
+	director := p.Director
+	p.Director = func(req *http.Request) {
+		director(req)
+		// NewSingleHostReverseProxy preserves Host. Set it on the forwarded
+		// copy so cache keys and invalidation keep using the inbound Host.
+		req.Host = origin.Host
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
