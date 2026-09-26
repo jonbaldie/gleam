@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"jonbaldie/gleam/cache"
 	"jonbaldie/gleam/codec"
+	"log"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -30,6 +33,54 @@ func TestSimpleCache(t *testing.T) {
 	_, found = c.Get("key2")
 	if found {
 		t.Error("Expected key2 to be expired")
+	}
+}
+
+func TestRequestLoggingHandlerEscapesPath(t *testing.T) {
+	var logs bytes.Buffer
+	previousOutput := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+	})
+
+	handler := requestLoggingHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "encoded control characters",
+			path: "/ok%0Aforged-line%0D%0Aanother",
+		},
+		{
+			name: "ordinary path",
+			path: "/assets/app.js",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs.Reset()
+			response, err := http.Get(server.URL + tt.path)
+			if err != nil {
+				t.Fatalf("send request: %v", err)
+			}
+			response.Body.Close()
+
+			want := "Received request: GET " + tt.path + "\n"
+			if got := logs.String(); got != want {
+				t.Fatalf("expected one escaped request log line %q, got %q", want, got)
+			}
+		})
 	}
 }
 
