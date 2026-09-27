@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.1.8] — 2026-09-28
+
+### Fixed
+- Escape request paths in request logs so encoded CR/LF bytes cannot forge log lines (#113, #117).
+- Forward the configured origin's `Host` header upstream instead of the client's (#112, #116).
+- Answer `If-None-Match` with 304 only for cached 200 responses (#108, #110).
+- Treat responses with more than one `Expires` header field as already expired (#107, #109).
+
 ## [v0.1.7] — 2026-09-24
 
 ### Fixed
