@@ -23,6 +23,27 @@ func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
 }
 
 func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
+	return NewHandler(newOriginReverseProxy(origin), c, ttl, varyHeaders)
+}
+
+// NewHandler wraps an upstream handler with this shared cache. The upstream
+// may be any http.Handler: a reverse proxy to a remote origin, or an
+// in-process handler. Hijack and Flush on the writers it receives delegate to
+// the client's writer.
+func NewHandler(upstream http.Handler, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			serveGet(upstream, c, w, r, varyHeaders, ttl)
+			return
+		}
+
+		serveNonGet(upstream, c, w, r)
+	})
+}
+
+// newOriginReverseProxy is the standard upstream adapter: a reverse proxy to
+// a single remote origin.
+func newOriginReverseProxy(origin *url.URL) *httputil.ReverseProxy {
 	p := httputil.NewSingleHostReverseProxy(origin)
 	director := p.Director
 	p.Director = func(req *http.Request) {
@@ -31,29 +52,21 @@ func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyH
 		// copy so cache keys and invalidation keep using the inbound Host.
 		req.Host = origin.Host
 	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			serveGet(p, c, w, r, varyHeaders, ttl)
-			return
-		}
-
-		serveNonGet(p, c, w, r)
-	})
+	return p
 }
 
 // serveGet answers a GET from the cache when possible, and otherwise forwards
-// it to the origin, storing the response when it is both storable and copied
+// it upstream, storing the response when it is both storable and copied
 // through to the client in full. An only-if-cached request gets a 504 when no
 // reusable response can satisfy it instead of being forwarded.
-func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
+func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
 	onlyIfCached := requestHasOnlyIfCached(r)
 	if requestBypassesCache(r) {
 		if onlyIfCached {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
-		p.ServeHTTP(w, r)
+		upstream.ServeHTTP(w, r)
 		return
 	}
 
@@ -73,11 +86,11 @@ func serveGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r 
 	}
 
 	crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
-	p.ServeHTTP(crw, r)
-	// Reaching here means the reverse proxy returned normally; an abnormal
-	// unwind (http.ErrAbortHandler on a copy error) skips this, and so skips
-	// storage too.
-	crw.proxyReturned = true
+	upstream.ServeHTTP(crw, r)
+	// Reaching here means the upstream returned normally; an abnormal unwind
+	// (such as the reverse proxy's http.ErrAbortHandler on a copy error)
+	// skips this, and so skips storage too.
+	crw.upstreamReturned = true
 
 	storeResponse(c, cacheKey, crw, varyHeaders, ttl, authenticated)
 }
@@ -128,12 +141,12 @@ func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, var
 	}, responseTTL)
 }
 
-// serveNonGet forwards a non-GET request to the origin and, when the method
+// serveNonGet forwards a non-GET request upstream and, when the method
 // is unsafe and the response is non-error, invalidates every stored entry
 // for the target URI (RFC 9111 section 4.4).
-func serveNonGet(p *httputil.ReverseProxy, c cache.Cache, w http.ResponseWriter, r *http.Request) {
+func serveNonGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *http.Request) {
 	srw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
-	p.ServeHTTP(srw, r)
+	upstream.ServeHTTP(srw, r)
 
 	if isUnsafeMethod(r.Method) && isNonErrorResponse(srw.status) {
 		c.InvalidatePrefix(cacheBaseKey(r))
@@ -215,17 +228,17 @@ type cacheResponseWriter struct {
 	buf          *bytes.Buffer
 	status       int
 	cachedHeader http.Header
-	// proxyReturned records that the reverse proxy finished serving without
+	// upstreamReturned records that the upstream finished serving without
 	// unwinding, and writeErr the failure of any forwarded body write. A
 	// response is only a complete representation when both agree the copy ran
 	// to completion; storing anything less would poison the cache with a
 	// truncated body (RFC 9111 section 3).
-	proxyReturned bool
-	writeErr      error
+	upstreamReturned bool
+	writeErr         error
 }
 
 func (w *cacheResponseWriter) copyComplete() bool {
-	return w.proxyReturned && w.writeErr == nil
+	return w.upstreamReturned && w.writeErr == nil
 }
 
 func (w *cacheResponseWriter) WriteHeader(status int) {

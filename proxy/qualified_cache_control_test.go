@@ -14,17 +14,16 @@ import (
 // (RFC 9111 section 5.2.2.7).
 func TestBugHuntQualifiedPrivateFieldStored(t *testing.T) {
 	var calls int64
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&calls, 1)
 		w.Header().Set("Cache-Control", `private="X-User-Id"`)
 		w.Header().Set("X-User-Id", fmt.Sprintf("user-%d", n))
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "public-body")
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for i := 1; i <= 2; i++ {
 		rec := httptest.NewRecorder()
@@ -42,17 +41,16 @@ func TestBugHuntQualifiedPrivateFieldStored(t *testing.T) {
 // jonbaldie/gleam#81 (RFC 9111 section 5.2.2.4).
 func TestBugHuntQualifiedNoCacheFieldReplayed(t *testing.T) {
 	var calls int64
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&calls, 1)
 		w.Header().Set("Cache-Control", `no-cache="X-Secret"`)
 		w.Header().Set("X-Secret", fmt.Sprintf("secret-%d", n))
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "public-body")
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for i := 1; i <= 2; i++ {
 		rec := httptest.NewRecorder()
@@ -79,15 +77,14 @@ func TestProxyHandlesQuotedCommaInCacheControlDirective(t *testing.T) {
 	} {
 		t.Run(directive, func(t *testing.T) {
 			var calls int64
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				atomic.AddInt64(&calls, 1)
 				w.Header().Set("Cache-Control", directive)
 				w.WriteHeader(http.StatusOK)
 				_, _ = fmt.Fprint(w, "public-body")
-			}))
-			defer origin.Close()
+			})
 
-			handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 			for i := 1; i <= 2; i++ {
 				rec := httptest.NewRecorder()
 				handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -116,15 +113,14 @@ func TestCacheControlAgeSkipsQuotedFieldNameLists(t *testing.T) {
 // still stored and reused.
 func TestProxyStillCachesResponseWithUnrelatedQualifiedDirective(t *testing.T) {
 	var calls int64
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&calls, 1)
 		w.Header().Set("Cache-Control", `max-age=60, no-transform`)
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "response-%d", n)
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 	for i := 1; i <= 2; i++ {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -141,15 +137,14 @@ func TestProxyStillCachesResponseWithUnrelatedQualifiedDirective(t *testing.T) {
 // form does.
 func TestProxyHonoursQualifiedRequestNoCache(t *testing.T) {
 	var calls int64
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&calls, 1)
 		w.Header().Set("Cache-Control", "max-age=60")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "response-%d", n)
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
 	for i := 1; i <= 2; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 		req.Header.Set("Cache-Control", `no-cache="X-Secret"`)

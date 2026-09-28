@@ -17,15 +17,14 @@ import (
 // share cached responses.
 func TestProxyHostHeaderCaseSharing(t *testing.T) {
 	var originCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := originCalls.Add(1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "payload-%d", call)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	testCases := []string{
 		"example.com:8080",
@@ -98,7 +97,7 @@ func TestProxyHostHeaderCaseInvalidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var getCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
 				case http.MethodGet:
 					call := getCalls.Add(1)
@@ -108,11 +107,10 @@ func TestProxyHostHeaderCaseInvalidation(t *testing.T) {
 				default:
 					t.Errorf("unexpected method: %s", r.Method)
 				}
-			}))
-			defer origin.Close()
+			})
 
 			c := newMockCache()
-			handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 			// Prime the cache
 			req1 := httptest.NewRequest(http.MethodGet, "/resource", nil)
