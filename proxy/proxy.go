@@ -90,7 +90,7 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 	// Reaching here means the upstream returned normally; an abnormal unwind
 	// (such as the reverse proxy's http.ErrAbortHandler on a copy error)
 	// skips this, and so skips storage too.
-	crw.proxyReturned = true
+	crw.upstreamReturned = true
 
 	storeResponse(c, cacheKey, crw, varyHeaders, ttl, authenticated)
 }
@@ -141,7 +141,7 @@ func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, var
 	}, responseTTL)
 }
 
-// serveNonGet forwards a non-GET request to the origin and, when the method
+// serveNonGet forwards a non-GET request upstream and, when the method
 // is unsafe and the response is non-error, invalidates every stored entry
 // for the target URI (RFC 9111 section 4.4).
 func serveNonGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *http.Request) {
@@ -228,17 +228,17 @@ type cacheResponseWriter struct {
 	buf          *bytes.Buffer
 	status       int
 	cachedHeader http.Header
-	// proxyReturned records that the upstream finished serving without
+	// upstreamReturned records that the upstream finished serving without
 	// unwinding, and writeErr the failure of any forwarded body write. A
 	// response is only a complete representation when both agree the copy ran
 	// to completion; storing anything less would poison the cache with a
 	// truncated body (RFC 9111 section 3).
-	proxyReturned bool
-	writeErr      error
+	upstreamReturned bool
+	writeErr         error
 }
 
 func (w *cacheResponseWriter) copyComplete() bool {
-	return w.proxyReturned && w.writeErr == nil
+	return w.upstreamReturned && w.writeErr == nil
 }
 
 func (w *cacheResponseWriter) WriteHeader(status int) {

@@ -680,7 +680,7 @@ func TestProxyCachedTrailersRemainTrailers(t *testing.T) {
 
 	c := newMockCache()
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
-	first := serveGET(handler, "/with-trailer")
+	first := recordGET(handler, "/with-trailer")
 	if got := first.Header.Get("X-Origin-Trailer"); got != "" {
 		t.Fatalf("first response unexpectedly promoted trailer to header: %q", got)
 	}
@@ -688,7 +688,7 @@ func TestProxyCachedTrailersRemainTrailers(t *testing.T) {
 		t.Fatalf("first response trailer = %q, want done", got)
 	}
 
-	second := serveGET(handler, "/with-trailer")
+	second := recordGET(handler, "/with-trailer")
 	if got := second.Header.Get("X-Origin-Trailer"); got != "" {
 		t.Fatalf("cached response promoted trailer to ordinary header: %q", got)
 	}
@@ -708,12 +708,12 @@ func TestBugHuntUnannouncedTrailerIsDroppedFromCache(t *testing.T) {
 
 	c := newMockCache()
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
-	first := serveGET(handler, "/with-unannounced-trailer")
+	first := recordGET(handler, "/with-unannounced-trailer")
 	if got := first.Trailer.Get("X-Unannounced-Trailer"); got != "done" {
 		t.Fatalf("first response trailer = %q, want done", got)
 	}
 
-	second := serveGET(handler, "/with-unannounced-trailer")
+	second := recordGET(handler, "/with-unannounced-trailer")
 	if got := second.Trailer.Get("X-Unannounced-Trailer"); got != "done" {
 		t.Fatalf("cached response trailer = %q, want done", got)
 	}
@@ -1567,7 +1567,7 @@ func TestProxyStreamingGetFlushesFirstChunk(t *testing.T) {
 	client := newFlushRecorder()
 	handler.ServeHTTP(client, httptest.NewRequest(http.MethodGet, "/stream", nil))
 
-	if got := client.firstFlush(t); got != "first\n" {
+	if got := client.firstBodyFlush(t); got != "first\n" {
 		t.Fatalf("body delivered at first flush = %q, want %q", got, "first\n")
 	}
 }

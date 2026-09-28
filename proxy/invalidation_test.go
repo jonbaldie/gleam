@@ -333,7 +333,7 @@ func TestProxyPOSTStreamsResponseWithoutBuffering(t *testing.T) {
 	client := newFlushRecorder()
 	handler.ServeHTTP(client, httptest.NewRequest(http.MethodPost, "/resource", strings.NewReader("payload")))
 
-	if got := client.firstFlush(t); got != "first\n" {
+	if got := client.firstBodyFlush(t); got != "first\n" {
 		t.Fatalf("body delivered at first flush = %q, want %q", got, "first\n")
 	}
 }

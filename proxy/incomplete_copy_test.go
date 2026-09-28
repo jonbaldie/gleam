@@ -49,16 +49,7 @@ func TestProxyDoesNotCacheResponseAfterDownstreamWriteError(t *testing.T) {
 	c := newMockCache()
 	handler := NewHandler(origin, c, time.Minute, DefaultVaryHeaders())
 
-	func() {
-		defer func() {
-			// A real server context turns a copy error into ErrAbortHandler;
-			// either unwind is acceptable, neither may cache.
-			if rec := recover(); rec != nil && rec != http.ErrAbortHandler {
-				panic(rec)
-			}
-		}()
-		handler.ServeHTTP(&failingWriter{}, httptest.NewRequest(http.MethodGet, "/big", nil))
-	}()
+	handler.ServeHTTP(&failingWriter{}, httptest.NewRequest(http.MethodGet, "/big", nil))
 
 	if len(c.store) != 0 {
 		for key, entry := range c.store {
@@ -73,5 +64,31 @@ func TestProxyDoesNotCacheResponseAfterDownstreamWriteError(t *testing.T) {
 	}
 	if originCalls.Load() != 2 {
 		t.Fatalf("expected the second GET to reach the origin, origin calls = %d", originCalls.Load())
+	}
+}
+
+// Under a real server the reverse proxy unwinds with http.ErrAbortHandler when
+// its copy to the client fails; the truncated response must not be stored.
+func TestProxyDoesNotCacheResponseWhenUpstreamAborts(t *testing.T) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "max-age=60")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		panic(http.ErrAbortHandler)
+	})
+	c := newMockCache()
+	handler := NewHandler(origin, c, time.Minute, DefaultVaryHeaders())
+
+	func() {
+		defer func() {
+			if rec := recover(); rec != http.ErrAbortHandler {
+				t.Fatalf("recovered %v, want the upstream's http.ErrAbortHandler", rec)
+			}
+		}()
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/big", nil))
+	}()
+
+	if len(c.store) != 0 {
+		t.Fatalf("expected nothing cached after an aborted copy, got %d entries", len(c.store))
 	}
 }

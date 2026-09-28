@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"net/http"
@@ -103,47 +102,4 @@ func TestNewHandlerReportsHijackUnsupportedByClientWriter(t *testing.T) {
 			}
 		})
 	}
-}
-
-// serveGET sends a GET through handler in-process and returns the recorded
-// response, with any trailers the handler set after the body.
-func serveGET(handler http.Handler, target string) *http.Response {
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-	return rec.Result()
-}
-
-// flushRecorder records a response and captures the body the client had
-// received each time the response was flushed.
-type flushRecorder struct {
-	*httptest.ResponseRecorder
-	flushes []string
-}
-
-func newFlushRecorder() *flushRecorder {
-	return &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
-}
-
-func (w *flushRecorder) Flush() {
-	w.ResponseRecorder.Flush()
-	w.flushes = append(w.flushes, w.Body.String())
-}
-
-func (w *flushRecorder) firstFlush(t *testing.T) string {
-	t.Helper()
-	if len(w.flushes) == 0 {
-		t.Fatal("the upstream's flush never reached the client writer")
-	}
-	return w.flushes[0]
-}
-
-// hijackRecorder is a client response writer whose connection is one end of
-// an in-memory pipe.
-type hijackRecorder struct {
-	*httptest.ResponseRecorder
-	conn net.Conn
-}
-
-func (w *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.conn, bufio.NewReadWriter(bufio.NewReader(w.conn), bufio.NewWriter(w.conn)), nil
 }
