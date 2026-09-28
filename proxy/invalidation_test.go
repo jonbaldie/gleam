@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bufio"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +15,7 @@ import (
 // serving data from before the write.
 func TestProxySuccessfulPOSTInvalidatesCachedGET(t *testing.T) {
 	var getCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			if getCalls.Add(1) == 1 {
@@ -29,11 +28,10 @@ func TestProxySuccessfulPOSTInvalidatesCachedGET(t *testing.T) {
 		default:
 			t.Errorf("unexpected origin request %s %s", r.Method, r.URL)
 		}
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	firstResp := httptest.NewRecorder()
@@ -64,7 +62,7 @@ func TestProxySuccessfulPOSTInvalidatesCachedGET(t *testing.T) {
 // origin-form equivalent, so it must invalidate the cached representation.
 func TestProxyAbsoluteFormPOSTInvalidatesCachedGET(t *testing.T) {
 	var getCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			if getCalls.Add(1) == 1 {
@@ -77,11 +75,10 @@ func TestProxyAbsoluteFormPOSTInvalidatesCachedGET(t *testing.T) {
 		default:
 			t.Errorf("unexpected origin request %s %s", r.Method, r.URL)
 		}
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	firstResp := httptest.NewRecorder()
@@ -113,7 +110,7 @@ func TestProxyAbsoluteFormPOSTInvalidatesCachedGET(t *testing.T) {
 // every variant for the URI, not just the incoming request's own key.
 func TestProxySuccessfulPOSTInvalidatesAllVaryVariants(t *testing.T) {
 	var getCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -123,11 +120,10 @@ func TestProxySuccessfulPOSTInvalidatesAllVaryVariants(t *testing.T) {
 		// caching explicitly (RFC 9111 section 3.5).
 		w.Header().Set("Cache-Control", "public")
 		_, _ = w.Write([]byte("state-" + r.Header.Get("Authorization")))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for _, authorization := range []string{"Bearer alpha", "Bearer beta"} {
 		req := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -164,7 +160,7 @@ func TestProxyFailedPOSTKeepsCachedGET(t *testing.T) {
 	for _, status := range []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusBadGateway} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var getCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
 				case http.MethodGet:
 					getCalls.Add(1)
@@ -174,11 +170,10 @@ func TestProxyFailedPOSTKeepsCachedGET(t *testing.T) {
 				default:
 					t.Errorf("unexpected origin request %s %s", r.Method, r.URL)
 				}
-			}))
-			defer origin.Close()
+			})
 
 			c := newMockCache()
-			handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 			get := httptest.NewRequest(http.MethodGet, "/resource", nil)
 			first := httptest.NewRecorder()
@@ -208,7 +203,7 @@ func TestProxyFailedPOSTKeepsCachedGET(t *testing.T) {
 
 func TestProxyRedirectPOSTInvalidatesCachedGET(t *testing.T) {
 	var getCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			http.Redirect(w, r, "/elsewhere", http.StatusSeeOther)
 			return
@@ -218,11 +213,10 @@ func TestProxyRedirectPOSTInvalidatesCachedGET(t *testing.T) {
 			return
 		}
 		_, _ = w.Write([]byte("new"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -247,7 +241,7 @@ func TestProxySuccessfulUnsafeMethodsInvalidateCachedGET(t *testing.T) {
 	for _, method := range []string{http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			var getCalls atomic.Int32
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
 					if getCalls.Add(1) == 1 {
 						_, _ = w.Write([]byte("old"))
@@ -257,11 +251,10 @@ func TestProxySuccessfulUnsafeMethodsInvalidateCachedGET(t *testing.T) {
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
-			}))
-			defer origin.Close()
+			})
 
 			c := newMockCache()
-			handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 			get := httptest.NewRequest(http.MethodGet, "/resource", nil)
 			first := httptest.NewRecorder()
@@ -289,18 +282,17 @@ func TestProxySuccessfulUnsafeMethodsInvalidateCachedGET(t *testing.T) {
 // must leave stored responses for the URI intact (RFC 9111 section 4.4).
 func TestProxySafeMethodsDoNotInvalidateCachedGET(t *testing.T) {
 	var getCalls atomic.Int32
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			getCalls.Add(1)
 			_, _ = w.Write([]byte("old"))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	get := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	first := httptest.NewRecorder()
@@ -328,46 +320,20 @@ func TestProxySafeMethodsDoNotInvalidateCachedGET(t *testing.T) {
 // the origin's first POST response chunk must reach the client before the
 // origin has finished writing the response.
 func TestProxyPOSTStreamsResponseWithoutBuffering(t *testing.T) {
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("first\n"))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		time.Sleep(200 * time.Millisecond)
 		_, _ = w.Write([]byte("second"))
-	}))
-	defer origin.Close()
+	})
 
-	handler := mustCachingProxyHandler(t, origin.URL, newMockCache(), time.Minute)
-	proxy := httptest.NewServer(handler)
-	defer proxy.Close()
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	client := newFlushRecorder()
+	handler.ServeHTTP(client, httptest.NewRequest(http.MethodPost, "/resource", strings.NewReader("payload")))
 
-	resp, err := http.Post(proxy.URL+"/resource", "text/plain", strings.NewReader("payload"))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	lineCh := make(chan string, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		line, err := bufio.NewReader(resp.Body).ReadString('\n')
-		if err != nil {
-			errCh <- err
-			return
-		}
-		lineCh <- line
-	}()
-
-	select {
-	case line := <-lineCh:
-		if line != "first\n" {
-			t.Fatalf("expected first streamed line %q, got %q", "first\n", line)
-		}
-	case err := <-errCh:
-		t.Fatalf("stream read failed: %v", err)
-	case <-time.After(time.Second):
-		t.Fatal("first POST response chunk was not streamed before the origin finished")
+	if got := client.firstFlush(t); got != "first\n" {
+		t.Fatalf("body delivered at first flush = %q, want %q", got, "first\n")
 	}
 }

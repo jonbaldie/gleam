@@ -14,17 +14,16 @@ import (
 // fully consumed by the origin's Age — must not be reused without validation.
 func TestBugHuntOriginAgeIgnoredForFreshness(t *testing.T) {
 	var calls int64
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&calls, 1)
 		w.Header().Set("Cache-Control", "max-age=60")
 		w.Header().Set("Age", "60")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "response-%d", n)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	for i := 1; i <= 2; i++ {
@@ -45,16 +44,15 @@ func TestBugHuntOriginAgeIgnoredForFreshness(t *testing.T) {
 // must not be served from cache without revalidation.
 func TestBugHuntHeuristicCacheIgnoresOriginAge(t *testing.T) {
 	var calls int64
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt64(&calls, 1)
 		w.Header().Set("Age", "600")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "response-%d", n)
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	for i := 1; i <= 2; i++ {

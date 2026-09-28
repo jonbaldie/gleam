@@ -22,14 +22,13 @@ func backdateStoredEntries(c *mockCache, d time.Duration) {
 // cache hit replays the stored headers verbatim, so the response carries no
 // Age header and appears to downstream caches to be as fresh as the origin's.
 func TestBugHuntCachedResponseOmitsAgeHeader(t *testing.T) {
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("body"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	first := httptest.NewRecorder()
@@ -101,7 +100,7 @@ func TestProxyCacheHitAgeHeader(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				for key, values := range tc.originHeader {
 					for _, value := range values {
 						w.Header().Add(key, value)
@@ -109,11 +108,10 @@ func TestProxyCacheHitAgeHeader(t *testing.T) {
 				}
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("body"))
-			}))
-			defer origin.Close()
+			})
 
 			c := newMockCache()
-			handler := mustCachingProxyHandler(t, origin.URL, c, time.Hour)
+			handler := mustCachingProxyHandler(t, origin, c, time.Hour)
 
 			req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 			handler.ServeHTTP(httptest.NewRecorder(), req)
@@ -137,15 +135,14 @@ func TestProxyCacheHitAgeHeader(t *testing.T) {
 func TestProxyCachedNotModifiedCarriesAge(t *testing.T) {
 	const etag = `"v1"`
 
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", etag)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("body"))
-	}))
-	defer origin.Close()
+	})
 
 	c := newMockCache()
-	handler := mustCachingProxyHandler(t, origin.URL, c, time.Minute)
+	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 	backdateStoredEntries(c, 12*time.Second)
