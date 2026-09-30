@@ -4,6 +4,15 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.1.9] — 2026-10-01
+
+### Added
+- `proxy.NewHandler` accepts any upstream `http.Handler`; `New` and `NewWithVaryHeaders` keep their signatures and delegate to it (#105, #120).
+
+### Fixed
+- Treat invalid `max-age` and `s-maxage` arguments as already stale instead of caching for the configured TTL; the first occurrence of each directive now applies (#122, #123).
+- Check cacheability of, and keep headers on, responses whose upstream handler returns without calling `WriteHeader` or `Write` (#121, #124).
+
 ## [v0.1.8] — 2026-09-28
 
 ### Fixed
