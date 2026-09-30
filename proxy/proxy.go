@@ -729,15 +729,21 @@ func responseFreshnessLifetime(header http.Header, receivedAt time.Time) (time.D
 	return 0, false
 }
 
+// cacheControlAge reports the first occurrence of the target delta-seconds
+// directive. An invalid argument, such as a negative or non-integer value,
+// reports a zero age so the response is treated as stale (RFC 9111 section
+// 4.2.1).
 func cacheControlAge(header http.Header, target string) (time.Duration, bool) {
 	for _, directive := range cacheControlDirectives(header) {
 		name, argument, hasArgument := strings.Cut(directive, "=")
 		if !hasArgument || !strings.EqualFold(strings.TrimSpace(name), target) {
 			continue
 		}
-		if age, ok := parseCacheControlAge(argument); ok {
-			return age, true
+		age, ok := parseCacheControlAge(argument)
+		if !ok {
+			return 0, true
 		}
+		return age, true
 	}
 	return 0, false
 }
