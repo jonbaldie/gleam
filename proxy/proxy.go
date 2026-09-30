@@ -91,6 +91,9 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 	// (such as the reverse proxy's http.ErrAbortHandler on a copy error)
 	// skips this, and so skips storage too.
 	crw.upstreamReturned = true
+	if crw.cachedHeader == nil {
+		crw.cachedHeader = cloneHeader(crw.ResponseWriter.Header())
+	}
 
 	storeResponse(c, cacheKey, crw, varyHeaders, ttl, authenticated)
 }
