@@ -1524,16 +1524,16 @@ func TestCacheTTLForResponse(t *testing.T) {
 			wantStore: false,
 		},
 		{
-			name:      "malformed max-age is ignored",
+			name:      "malformed max-age skips storage",
 			header:    http.Header{"Cache-Control": []string{"public, max-age=not-a-number"}},
-			wantTTL:   configuredTTL,
-			wantStore: true,
+			wantTTL:   0,
+			wantStore: false,
 		},
 		{
-			name:      "malformed s-maxage falls back to max-age",
+			name:      "malformed s-maxage skips storage despite max-age",
 			header:    http.Header{"Cache-Control": []string{"s-maxage=bad, max-age=30"}},
-			wantTTL:   30 * time.Second,
-			wantStore: true,
+			wantTTL:   0,
+			wantStore: false,
 		},
 	}
 
