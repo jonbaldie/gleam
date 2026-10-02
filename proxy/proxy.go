@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"jonbaldie/gleam/cache"
+	"jonbaldie/gleam/cachepolicy"
 )
 
 func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
@@ -60,8 +61,8 @@ func newOriginReverseProxy(origin *url.URL) *httputil.ReverseProxy {
 // through to the client in full. An only-if-cached request gets a 504 when no
 // reusable response can satisfy it instead of being forwarded.
 func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *http.Request, varyHeaders []string, ttl time.Duration) {
-	onlyIfCached := requestHasOnlyIfCached(r)
-	if requestBypassesCache(r) {
+	onlyIfCached := cachepolicy.OnlyIfCached(r)
+	if cachepolicy.ShouldBypass(r) {
 		if onlyIfCached {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
@@ -73,7 +74,7 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 	// RFC 9111 section 3.5: a shared cache may only reuse — or store — a
 	// response to an authenticated request when the response says so
 	// explicitly, whatever the request headers the cache key covers.
-	authenticated := requestHasAuthorization(r)
+	authenticated := cachepolicy.IsAuthenticated(r)
 
 	cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
 	if cachedItem, found := reusableCachedItem(c, cacheKey, authenticated); found {
@@ -98,15 +99,6 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 	storeResponse(c, cacheKey, crw, varyHeaders, ttl, authenticated)
 }
 
-// requestBypassesCache reports whether a GET must go straight to the origin
-// without either a cache lookup or storage. Request no-store forbids both
-// (RFC 9111 section 5.2.1.5); no-cache demands revalidation this cache does
-// not perform; upgrades and ranges are not interchangeable with a full GET.
-func requestBypassesCache(r *http.Request) bool {
-	return requestForbidsStorage(r) || isUpgradeRequest(r) ||
-		requestRequiresRevalidation(r) || requestHasRange(r)
-}
-
 // reusableCachedItem returns the stored entry for a key when this cache may
 // answer the request from it.
 func reusableCachedItem(c cache.Cache, cacheKey string, authenticated bool) (*cache.CacheItem, bool) {
@@ -114,7 +106,7 @@ func reusableCachedItem(c cache.Cache, cacheKey string, authenticated bool) (*ca
 	if !found {
 		return nil, false
 	}
-	if authenticated && !responsePermitsSharedCacheReuseOfAuthorized(cachedItem.Header) {
+	if !cachepolicy.CanReuse(cachedItem.Header, authenticated) {
 		return nil, false
 	}
 	return cachedItem, true
@@ -123,15 +115,12 @@ func reusableCachedItem(c cache.Cache, cacheKey string, authenticated bool) (*ca
 // storeResponse caches the origin's response when it is a complete, storable
 // representation this shared cache is allowed to reuse.
 func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, varyHeaders []string, ttl time.Duration, authenticated bool) {
-	if !crw.copyComplete() || !responseIsCacheable(crw.status, crw.cachedHeader, varyHeaders) {
-		return
-	}
-	if authenticated && !responsePermitsSharedCacheReuseOfAuthorized(crw.cachedHeader) {
+	if !crw.copyComplete() || !cachepolicy.CanStoreResponse(crw.status, crw.cachedHeader, varyHeaders, authenticated) {
 		return
 	}
 
 	receivedAt := time.Now()
-	responseTTL, shouldStore := cacheTTLForResponse(crw.cachedHeader, ttl, receivedAt)
+	responseTTL, shouldStore := cachepolicy.FreshnessLifetime(crw.cachedHeader, receivedAt, ttl)
 	if !shouldStore {
 		return
 	}
@@ -151,7 +140,7 @@ func serveNonGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r 
 	srw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
 	upstream.ServeHTTP(srw, r)
 
-	if isUnsafeMethod(r.Method) && isNonErrorResponse(srw.status) {
+	if cachepolicy.InvalidatesStoredResponses(r.Method, srw.status) {
 		c.InvalidatePrefix(cacheBaseKey(r))
 	}
 }
@@ -206,24 +195,6 @@ func (w *statusResponseWriter) Flush() {
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
-}
-
-// RFC 9110 section 9.2.1: GET, HEAD, OPTIONS, and TRACE are safe; other
-// methods, including those whose safety is unknown, are unsafe (RFC 9111
-// section 4.4).
-func isUnsafeMethod(method string) bool {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
-		return false
-	default:
-		return true
-	}
-}
-
-// A non-error response — 2xx or 3xx — to an unsafe request invalidates stored
-// responses for the target URI (RFC 9111 section 4.4).
-func isNonErrorResponse(status int) bool {
-	return status >= http.StatusOK && status < http.StatusBadRequest
 }
 
 type cacheResponseWriter struct {
@@ -313,16 +284,7 @@ func (w *cacheResponseWriter) cachedTrailer() http.Header {
 // conditional validators against the stored representation and responding 304
 // when they are satisfied.
 func serveCachedItem(w http.ResponseWriter, r *http.Request, item *cache.CacheItem) {
-	// RFC 9110 section 13.2.2: If-None-Match, when present, takes precedence
-	// and If-Modified-Since is ignored. A 304 stands in for a 200 (section
-	// 15.4.5), so neither validator may yield 304 for a cached non-200; the
-	// stored representation is served in full instead.
-	if len(r.Header.Values("If-None-Match")) > 0 {
-		if item.Status == http.StatusOK && ifNoneMatchMatches(r.Header.Values("If-None-Match"), item.Header.Get("ETag")) {
-			writeCachedNotModified(w, item)
-			return
-		}
-	} else if item.Status == http.StatusOK && ifModifiedSinceSatisfied(r.Header.Values("If-Modified-Since"), item.Header.Get("Last-Modified")) {
+	if cachepolicy.NotModified(r.Header, item.Status, item.Header) {
 		writeCachedNotModified(w, item)
 		return
 	}
@@ -359,67 +321,7 @@ func copyCachedHeaders(w http.ResponseWriter, item *cache.CacheItem) {
 	}
 	// Reuse without revalidation must report how long the response has been
 	// held here, rather than replaying the origin's Age (RFC 9111 section 4.2.3).
-	w.Header().Set("Age", strconv.FormatUint(currentAgeSeconds(item, time.Now()), 10))
-}
-
-// currentAgeSeconds is RFC 9111 section 4.2.3's current_age for a stored
-// response: the age the origin's copy already had when this cache received it,
-// plus the time it has been resident here since.
-func currentAgeSeconds(item *cache.CacheItem, now time.Time) uint64 {
-	correctedInitialAge := correctedInitialAge(item.Header, item.StoredAt)
-
-	var residentTime time.Duration
-	if !item.StoredAt.IsZero() {
-		residentTime = now.Sub(item.StoredAt)
-	}
-
-	return nonNegativeSeconds(correctedInitialAge + residentTime)
-}
-
-// correctedInitialAge is the greater of the age the origin claimed and the age
-// apparent from the response's Date, measured at the moment this cache
-// received the response.
-func correctedInitialAge(header http.Header, receivedAt time.Time) time.Duration {
-	var apparentAge time.Duration
-	if date, ok := parseHTTPDate(header.Get("Date")); ok && !receivedAt.IsZero() {
-		apparentAge = receivedAt.Sub(date)
-	}
-	if apparentAge < 0 {
-		apparentAge = 0
-	}
-
-	ageValue, ok := parseAgeValue(header.Get("Age"))
-	if ok && ageValue > apparentAge {
-		return ageValue
-	}
-	return apparentAge
-}
-
-// parseAgeValue reads an Age field value: a non-negative number of seconds.
-// A value that does not parse is ignored (RFC 9111 section 5.1).
-func parseAgeValue(raw string) (time.Duration, bool) {
-	seconds, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return saturatingSeconds(seconds), true
-}
-
-// saturatingSeconds converts a seconds count to a Duration, pinning values too
-// large to represent at the maximum rather than overflowing.
-func saturatingSeconds(seconds uint64) time.Duration {
-	const maxDuration = time.Duration(1<<63 - 1)
-	if seconds > uint64(maxDuration/time.Second) {
-		return maxDuration
-	}
-	return time.Duration(seconds) * time.Second
-}
-
-func nonNegativeSeconds(d time.Duration) uint64 {
-	if d <= 0 {
-		return 0
-	}
-	return uint64(d / time.Second)
+	w.Header().Set("Age", strconv.FormatUint(cachepolicy.CurrentAge(item.Header, item.StoredAt, time.Now()), 10))
 }
 
 func announceCachedTrailers(w http.ResponseWriter, item *cache.CacheItem) {
@@ -428,407 +330,6 @@ func announceCachedTrailers(w http.ResponseWriter, item *cache.CacheItem) {
 			w.Header().Add("Trailer", name)
 		}
 	}
-}
-
-type entityTag struct {
-	opaque string
-}
-
-func ifNoneMatchMatches(ifNoneMatch []string, etag string) bool {
-	if len(ifNoneMatch) == 0 {
-		return false
-	}
-	var tags []entityTag
-	for _, value := range ifNoneMatch {
-		star, valueTags := parseIfNoneMatchValue(value)
-		if star {
-			return true
-		}
-		tags = append(tags, valueTags...)
-	}
-
-	cached, ok := parseEntityTag(etag)
-	if !ok {
-		return false
-	}
-	for _, tag := range tags {
-		if tag.opaque == cached.opaque {
-			return true
-		}
-	}
-	return false
-}
-
-// ifModifiedSinceSatisfied reports whether a stored representation with the
-// given Last-Modified date has not been modified since the request's
-// If-Modified-Since date, i.e. whether it can be answered with 304 locally.
-// A condition that is absent, or whose date cannot be parsed as an HTTP date,
-// is ignored rather than treated as a match. A field with more than one
-// member is ignored entirely (RFC 9110 section 13.1.3).
-func ifModifiedSinceSatisfied(ifModifiedSince []string, lastModified string) bool {
-	if len(ifModifiedSince) != 1 {
-		return false
-	}
-	stored, ok := parseHTTPDate(lastModified)
-	if !ok {
-		return false
-	}
-	condition, ok := parseHTTPDate(ifModifiedSince[0])
-	if !ok {
-		return false
-	}
-	return !stored.After(condition)
-}
-
-func parseHTTPDate(raw string) (time.Time, bool) {
-	t, err := http.ParseTime(strings.TrimSpace(raw))
-	if err != nil {
-		return time.Time{}, false
-	}
-	return t, true
-}
-
-func parseEntityTag(raw string) (entityTag, bool) {
-	raw = strings.TrimSpace(raw)
-	tag, n, ok := scanEntityTag(raw)
-	if !ok || strings.TrimSpace(raw[n:]) != "" {
-		return entityTag{}, false
-	}
-	return tag, true
-}
-
-func parseIfNoneMatchValue(value string) (star bool, tags []entityTag) {
-	rest := strings.TrimSpace(value)
-	for rest != "" {
-		rest = strings.TrimLeft(rest, " \t")
-		if rest == "" {
-			break
-		}
-		if isStarToken(rest) {
-			return true, tags
-		}
-		tag, n, ok := scanEntityTag(rest)
-		if !ok {
-			rest = skipToNextListItem(rest)
-			continue
-		}
-		tags = append(tags, tag)
-		rest = consumeListSeparator(rest[n:])
-	}
-	return false, tags
-}
-
-func isStarToken(s string) bool {
-	if s[0] != '*' {
-		return false
-	}
-	after := strings.TrimLeft(s[1:], " \t")
-	return after == "" || after[0] == ','
-}
-
-func skipToNextListItem(s string) string {
-	comma := strings.IndexByte(s, ',')
-	if comma < 0 {
-		return ""
-	}
-	return s[comma+1:]
-}
-
-func consumeListSeparator(s string) string {
-	s = strings.TrimLeft(s, " \t")
-	if s == "" || s[0] != ',' {
-		return ""
-	}
-	return s[1:]
-}
-
-func scanEntityTag(s string) (entityTag, int, bool) {
-	i := 0
-	end := len(s)
-	if end >= 2 && s[0] == 'W' && s[1] == '/' {
-		i = 2
-	}
-	if i >= end || s[i] != '"' {
-		return entityTag{}, 0, false
-	}
-	j := i + 1
-	for j < end && s[j] != '"' {
-		j++
-	}
-	if j >= end {
-		return entityTag{}, 0, false
-	}
-	return entityTag{opaque: s[i : j+1]}, j + 1, true
-}
-
-func isUpgradeRequest(r *http.Request) bool {
-	return headerContainsToken(r.Header.Values("Connection"), "upgrade") && r.Header.Get("Upgrade") != ""
-}
-
-func requestRequiresRevalidation(r *http.Request) bool {
-	return cacheControlHasDirective(r.Header, "no-cache")
-}
-
-func requestHasOnlyIfCached(r *http.Request) bool {
-	return cacheControlHasDirective(r.Header, "only-if-cached")
-}
-
-func requestForbidsStorage(r *http.Request) bool {
-	return cacheControlHasDirective(r.Header, "no-store")
-}
-
-// Range requests select a partial representation, so their responses are not
-// interchangeable with a full GET's: bypass the cache in both directions
-// rather than keying on the Range header.
-func requestHasRange(r *http.Request) bool {
-	return len(r.Header.Values("Range")) > 0
-}
-
-func requestHasAuthorization(r *http.Request) bool {
-	for _, value := range r.Header.Values("Authorization") {
-		if strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// responsePermitsSharedCacheReuseOfAuthorized reports whether a response
-// carries one of the directives RFC 9111 section 3.5 accepts as explicit
-// permission for a shared cache to reuse it for a request bearing
-// Authorization.
-func responsePermitsSharedCacheReuseOfAuthorized(header http.Header) bool {
-	if headerContainsToken(header.Values("Cache-Control"), "public") ||
-		headerContainsToken(header.Values("Cache-Control"), "must-revalidate") {
-		return true
-	}
-	_, hasSMaxAge := cacheControlAge(header, "s-maxage")
-	return hasSMaxAge
-}
-
-func responseIsCacheable(status int, header http.Header, varyHeaders []string) bool {
-	if !responseStatusAllowsStorage(status, header) {
-		return false
-	}
-	if cacheControlForbidsSharedCacheStorage(header) {
-		return false
-	}
-	// In a shared cache, cookie-setting responses are user-specific: storing
-	// them risks replaying one client's cookies to another.
-	if len(header.Values("Set-Cookie")) > 0 {
-		return false
-	}
-	for _, token := range commaSeparatedHeaderValues(header.Values("Vary")) {
-		if token == "*" || !containsHeaderName(varyHeaders, token) {
-			return false
-		}
-	}
-	return true
-}
-
-func responseStatusAllowsStorage(status int, header http.Header) bool {
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return false
-	}
-	if status == http.StatusPartialContent {
-		return false
-	}
-	// RFC 9111 section 3 permits storing a response only when it has an
-	// explicit cacheability directive or a heuristically cacheable status.
-	return isHeuristicallyCacheableStatus(status) || responseHasExplicitCacheability(header)
-}
-
-func isHeuristicallyCacheableStatus(status int) bool {
-	switch status {
-	case http.StatusOK, http.StatusNonAuthoritativeInfo, http.StatusNoContent:
-		return true
-	default:
-		return false
-	}
-}
-
-func responseHasExplicitCacheability(header http.Header) bool {
-	if headerContainsToken(header.Values("Cache-Control"), "public") {
-		return true
-	}
-	if _, found := cacheControlAge(header, "s-maxage"); found {
-		return true
-	}
-	if _, found := cacheControlAge(header, "max-age"); found {
-		return true
-	}
-	return len(header.Values("Expires")) > 0
-}
-
-// In a shared cache, private responses are user-specific: storing them risks
-// leaking one client's data to another.
-//
-// The qualified forms `private="X-User-Id"` and `no-cache="X-Secret"` (RFC 9111
-// sections 5.2.2.7 and 5.2.2.4) name fields a shared cache must not store or
-// must revalidate before reuse. Gleam serves hits without revalidation and
-// stores whole responses, so it takes the conservative fallback both sections
-// permit and declines to store the response at all.
-func cacheControlForbidsSharedCacheStorage(header http.Header) bool {
-	return cacheControlHasDirective(header, "no-store") ||
-		cacheControlHasDirective(header, "no-cache") ||
-		cacheControlHasDirective(header, "private")
-}
-
-// cacheTTLForResponse caps the configured cache retention at the freshness
-// the origin's response has left: its advertised freshness lifetime less the
-// age the response already carried when it arrived here (RFC 9111 sections
-// 4.2 and 4.2.3). Responses with no usable freshness directive are
-// heuristically cacheable for the configured TTL, which stands in as their
-// freshness lifetime and is likewise reduced by the response's initial age;
-// responses that are already stale are not stored because cache hits are
-// served without revalidation.
-func cacheTTLForResponse(header http.Header, configuredTTL time.Duration, receivedAt time.Time) (time.Duration, bool) {
-	freshnessLifetime, hasFreshness := responseFreshnessLifetime(header, receivedAt)
-	if !hasFreshness {
-		freshnessLifetime = configuredTTL
-	}
-	remainingFreshness := freshnessLifetime - correctedInitialAge(header, receivedAt)
-	if remainingFreshness <= 0 {
-		return 0, false
-	}
-	if remainingFreshness < configuredTTL {
-		return remainingFreshness, true
-	}
-	return configuredTTL, true
-}
-
-func responseFreshnessLifetime(header http.Header, receivedAt time.Time) (time.Duration, bool) {
-	if freshness, found := cacheControlAge(header, "s-maxage"); found {
-		return freshness, true
-	}
-	if freshness, found := cacheControlAge(header, "max-age"); found {
-		return freshness, true
-	}
-
-	if len(header.Values("Expires")) > 0 {
-		if len(header.Values("Expires")) > 1 {
-			// RFC 9111 section 5.3: a response with more than one Expires
-			// header field has an invalid date format and MUST be treated as
-			// already expired.
-			return 0, true
-		}
-
-		referenceTime := receivedAt
-		if date, dateOK := parseHTTPDate(header.Get("Date")); dateOK {
-			referenceTime = date
-		} else if referenceTime.IsZero() {
-			referenceTime = time.Now()
-		}
-
-		expires, expiresOK := parseHTTPDate(header.Get("Expires"))
-		if !expiresOK || !expires.After(referenceTime) {
-			// RFC 9111 section 5.3: A cache recipient MUST interpret invalid
-			// date formats, especially the value "0", as representing a time in
-			// the past (i.e., "already expired").
-			return 0, true
-		}
-		return expires.Sub(referenceTime), true
-	}
-	return 0, false
-}
-
-// cacheControlAge reports the first occurrence of the target delta-seconds
-// directive. An invalid argument, such as a negative or non-integer value,
-// reports a zero age so the response is treated as stale (RFC 9111 section
-// 4.2.1).
-func cacheControlAge(header http.Header, target string) (time.Duration, bool) {
-	for _, directive := range cacheControlDirectives(header) {
-		name, argument, hasArgument := strings.Cut(directive, "=")
-		if !hasArgument || !strings.EqualFold(strings.TrimSpace(name), target) {
-			continue
-		}
-		age, ok := parseCacheControlAge(argument)
-		if !ok {
-			return 0, true
-		}
-		return age, true
-	}
-	return 0, false
-}
-
-func parseCacheControlAge(raw string) (time.Duration, bool) {
-	raw = strings.TrimSpace(raw)
-	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		raw = strings.TrimSpace(raw[1 : len(raw)-1])
-	}
-	seconds, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-
-	maxDuration := time.Duration(1<<63 - 1)
-	if seconds > uint64(maxDuration/time.Second) {
-		return maxDuration, true
-	}
-	return time.Duration(seconds) * time.Second, true
-}
-
-func containsHeaderName(headers []string, target string) bool {
-	for _, h := range headers {
-		if strings.EqualFold(strings.TrimSpace(h), target) {
-			return true
-		}
-	}
-	return false
-}
-
-// cacheControlHasDirective reports whether the Cache-Control header carries
-// the named directive, whether bare (`private`) or qualified with an argument
-// (`private="X-User-Id"`).
-func cacheControlHasDirective(header http.Header, name string) bool {
-	for _, directive := range cacheControlDirectives(header) {
-		directiveName, _, _ := strings.Cut(directive, "=")
-		if strings.EqualFold(strings.TrimSpace(directiveName), name) {
-			return true
-		}
-	}
-	return false
-}
-
-// cacheControlDirectives splits the Cache-Control header into its directives.
-func cacheControlDirectives(header http.Header) []string {
-	var directives []string
-	for _, value := range header.Values("Cache-Control") {
-		directives = append(directives, splitCacheControlValue(value)...)
-	}
-	return directives
-}
-
-// splitCacheControlValue splits one Cache-Control field value on the commas
-// that separate directives. Unlike a plain comma split it leaves the commas
-// inside a quoted-string argument in place, so the field-name list in
-// `private="X-A, X-B"` stays with its directive (RFC 9111 section 5.2).
-func splitCacheControlValue(value string) []string {
-	var directives []string
-	start := 0
-	inQuotes := false
-	escaped := false
-	for i, c := range value {
-		switch {
-		case escaped:
-			escaped = false
-		case c == '\\' && inQuotes:
-			escaped = true
-		case c == '"':
-			inQuotes = !inQuotes
-		case c == ',' && !inQuotes:
-			directives = appendDirective(directives, value[start:i])
-			start = i + 1
-		}
-	}
-	return appendDirective(directives, value[start:])
-}
-
-func appendDirective(directives []string, raw string) []string {
-	if directive := strings.TrimSpace(raw); directive != "" {
-		return append(directives, directive)
-	}
-	return directives
 }
 
 func headerContainsToken(values []string, token string) bool {

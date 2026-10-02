@@ -44,27 +44,3 @@ func TestInvalidCacheControlAgeMustNotBeCached(t *testing.T) {
 		})
 	}
 }
-
-func TestCacheTTLForResponseInvalidCacheControlAge(t *testing.T) {
-	receivedAt := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
-	configuredTTL := 5 * time.Minute
-
-	for _, cacheControl := range []string{
-		"max-age=-1",
-		"max-age=invalid",
-		"max-age=1.5",
-		"max-age=",
-		"s-maxage=-1",
-		"s-maxage=invalid",
-		"s-maxage=bad, max-age=30",
-		"max-age=bad, max-age=30",
-	} {
-		t.Run(cacheControl, func(t *testing.T) {
-			header := http.Header{"Cache-Control": []string{cacheControl}}
-			ttl, store := cacheTTLForResponse(header, configuredTTL, receivedAt)
-			if store || ttl != 0 {
-				t.Fatalf("cacheTTLForResponse() = (%v, %v), want (0, false)", ttl, store)
-			}
-		})
-	}
-}
