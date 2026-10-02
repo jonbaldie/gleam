@@ -4,6 +4,8 @@
 // conditional request with 304, and which responses invalidate storage
 // (RFC 9110 and RFC 9111).
 //
-// Every function is pure: it reads headers, statuses, and times, and holds no
-// state, so the rules can be tested without any HTTP machinery.
+// Every function is stateless: it reads headers, statuses, and the times the
+// caller supplies, so the rules can be tested without any HTTP machinery. The
+// one exception is FreshnessLifetime, which falls back to the wall clock when
+// given a zero receipt time and no usable Date header.
 package cachepolicy
