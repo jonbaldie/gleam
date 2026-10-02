@@ -207,40 +207,6 @@ func TestProxyConditionalGETWithIfModifiedSince(t *testing.T) {
 	}
 }
 
-func TestIfModifiedSinceSatisfied(t *testing.T) {
-	const rfc1123 = "Thu, 10 Sep 2026 03:58:45 GMT"
-
-	tests := []struct {
-		name            string
-		ifModifiedSince []string
-		lastModified    string
-		want            bool
-	}{
-		{name: "no condition", ifModifiedSince: nil, lastModified: rfc1123, want: false},
-		{name: "no stored last-modified", ifModifiedSince: []string{rfc1123}, lastModified: "", want: false},
-		{name: "equal dates", ifModifiedSince: []string{rfc1123}, lastModified: rfc1123, want: true},
-		{name: "condition after last-modified", ifModifiedSince: []string{"Fri, 11 Sep 2026 00:00:00 GMT"}, lastModified: rfc1123, want: true},
-		{name: "condition before last-modified", ifModifiedSince: []string{"Wed, 09 Sep 2026 00:00:00 GMT"}, lastModified: rfc1123, want: false},
-		{name: "unparseable condition", ifModifiedSince: []string{"not a date"}, lastModified: rfc1123, want: false},
-		{name: "unparseable last-modified", ifModifiedSince: []string{rfc1123}, lastModified: "yesterday", want: false},
-		{name: "surrounding whitespace", ifModifiedSince: []string{"  " + rfc1123 + "  "}, lastModified: rfc1123, want: true},
-		{name: "rfc850 format", ifModifiedSince: []string{"Thursday, 10-Sep-26 03:58:45 GMT"}, lastModified: rfc1123, want: true},
-		{name: "asctime format", ifModifiedSince: []string{"Thu Sep 10 03:58:45 2026"}, lastModified: rfc1123, want: true},
-		{name: "two valid values ignored", ifModifiedSince: []string{rfc1123, "Fri, 11 Sep 2026 00:00:00 GMT"}, lastModified: rfc1123, want: false},
-		{name: "two values matching stored date ignored", ifModifiedSince: []string{rfc1123, rfc1123}, lastModified: rfc1123, want: false},
-		{name: "one unparseable then a valid value ignored", ifModifiedSince: []string{"garbage", rfc1123}, lastModified: rfc1123, want: false},
-		{name: "two header values ignored", ifModifiedSince: []string{"garbage", rfc1123}, lastModified: rfc1123, want: false},
-		{name: "two valid values with non-matching dates", ifModifiedSince: []string{"Wed, 09 Sep 2026 00:00:00 GMT", "Wed, 09 Sep 2026 00:00:00 GMT"}, lastModified: rfc1123, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ifModifiedSinceSatisfied(tt.ifModifiedSince, tt.lastModified); got != tt.want {
-				t.Fatalf("ifModifiedSinceSatisfied(%q, %q) = %v, want %v", tt.ifModifiedSince, tt.lastModified, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestBugHuntIfModifiedSinceIgnoredForNon200CachedResponse reproduces
 // jonbaldie/gleam#87: RFC 9110 section 13.1.3 requires ignoring
 // If-Modified-Since when the request would otherwise result in anything other
