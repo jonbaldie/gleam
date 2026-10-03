@@ -85,6 +85,43 @@ func TestBugHuntMultiValueIfModifiedSinceIsIgnored(t *testing.T) {
 	}
 }
 
+func TestProxyConditionalGETIgnoresMultipleLastModifiedValues(t *testing.T) {
+	const body = "body"
+	const condition = "Sat, 03 Oct 2026 02:00:00 GMT"
+
+	var originCalls atomic.Int32
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originCalls.Add(1)
+		w.Header().Add("Last-Modified", "Sat, 03 Oct 2026 01:00:00 GMT")
+		w.Header().Add("Last-Modified", "Sat, 03 Oct 2026 03:00:00 GMT")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	})
+
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	if got := first.Header().Values("Last-Modified"); len(got) != 2 {
+		t.Fatalf("first response Last-Modified values = %q, want both values", got)
+	}
+
+	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	conditional.Header.Set("If-Modified-Since", condition)
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, conditional)
+
+	if second.Code != http.StatusOK {
+		t.Fatalf("conditional response status = %d, want %d", second.Code, http.StatusOK)
+	}
+	if got := second.Body.String(); got != body {
+		t.Fatalf("conditional response body = %q, want %q", got, body)
+	}
+	if got := originCalls.Load(); got != 1 {
+		t.Fatalf("origin calls = %d, want 1 (conditional request should use cached response)", got)
+	}
+}
+
 func TestProxyConditionalGETWithIfModifiedSince(t *testing.T) {
 	const lastModified = "Thu, 10 Sep 2026 03:58:45 GMT"
 	const earlier = "Thu, 01 Jan 2026 00:00:00 GMT"

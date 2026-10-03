@@ -19,7 +19,7 @@ func NotModified(reqHeader http.Header, storedStatus int, storedHeader http.Head
 	if ifNoneMatch := reqHeader.Values("If-None-Match"); len(ifNoneMatch) > 0 {
 		return ifNoneMatchMatches(ifNoneMatch, storedHeader.Get("ETag"))
 	}
-	return ifModifiedSinceSatisfied(reqHeader.Values("If-Modified-Since"), storedHeader.Get("Last-Modified"))
+	return ifModifiedSinceSatisfied(reqHeader.Values("If-Modified-Since"), storedHeader.Values("Last-Modified"))
 }
 
 type entityTag struct {
@@ -52,13 +52,13 @@ func ifNoneMatchMatches(ifNoneMatch []string, etag string) bool {
 // given Last-Modified date has not been modified since the request's
 // If-Modified-Since date, i.e. whether it can be answered with 304 locally.
 // A condition that is absent, or whose date cannot be parsed as an HTTP date,
-// is ignored rather than treated as a match. A field with more than one
-// member is ignored entirely (RFC 9110 section 13.1.3).
-func ifModifiedSinceSatisfied(ifModifiedSince []string, lastModified string) bool {
-	if len(ifModifiedSince) != 1 {
+// is ignored rather than treated as a match. If either field has more than one
+// value, it is ignored entirely (RFC 9110 sections 8.8.2 and 13.1.3).
+func ifModifiedSinceSatisfied(ifModifiedSince, lastModified []string) bool {
+	if len(ifModifiedSince) != 1 || len(lastModified) != 1 {
 		return false
 	}
-	stored, ok := parseHTTPDate(lastModified)
+	stored, ok := parseHTTPDate(lastModified[0])
 	if !ok {
 		return false
 	}
