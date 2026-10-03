@@ -1,0 +1,82 @@
+=== Bug #128: Cache uses configured TTL when Cache-Control max-age or s-maxage has no argument ===
+Issue URL: https://github.com/jonbaldie/gleam/issues/128
+
+1. Live Proxy Reproduction:
+Origin responds with "Cache-Control: public, max-age" (no delta-seconds argument).
+
+$ curl -i http://127.0.0.1:19901/bare-max-age
+HTTP/1.1 200 OK
+Cache-Control: public, max-age
+Content-Length: 12
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:34:23 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+bare-max-age
+
+Check Redis TTL:
+$ redis-cli -p 16379 ttl "127.0.0.1:19901#/bare-max-age"
+(integer) 298
+(The item was stored in cache with defaultTTL of 5 minutes / 300s)
+
+Repeat request hits cache:
+$ curl -i http://127.0.0.1:19901/bare-max-age
+HTTP/1.1 200 OK
+Age: 244
+Cache-Control: public, max-age
+Content-Length: 12
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:34:23 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+bare-max-age
+
+Same behavior occurs for "Cache-Control: public, s-maxage":
+$ curl -i http://127.0.0.1:19901/bare-s-maxage
+HTTP/1.1 200 OK
+Cache-Control: public, s-maxage
+Content-Length: 13
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:34:28 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+bare-s-maxage
+
+Check Redis TTL:
+$ redis-cli -p 16379 ttl "127.0.0.1:19901#/bare-s-maxage"
+(integer) 296
+
+2. Code Level Reproducer (go run reproducers.go):
+```go
+receivedAt := time.Date(2026, 10, 3, 2, 0, 0, 0, time.UTC)
+defaultTTL := 5 * time.Minute
+
+// Test 1: Bare max-age
+h1 := http.Header{"Cache-Control": []string{"public, max-age"}}
+ttl1, store1 := cachepolicy.FreshnessLifetime(h1, receivedAt, defaultTTL)
+// Output: ttl=5m0s, store=true (Expected: store=false, ttl=0)
+
+// Test 2: Bare s-maxage
+h2 := http.Header{"Cache-Control": []string{"public, s-maxage"}}
+ttl2, store2 := cachepolicy.FreshnessLifetime(h2, receivedAt, defaultTTL)
+// Output: ttl=5m0s, store=true (Expected: store=false, ttl=0)
+
+// Test 3: Bare s-maxage followed by max-age=30
+h3 := http.Header{"Cache-Control": []string{"s-maxage, max-age=30"}}
+ttl3, store3 := cachepolicy.FreshnessLifetime(h3, receivedAt, defaultTTL)
+// Output: ttl=30s, store=true (Expected: store=false, ttl=0)
+```
+
+Root Cause Analysis:
+In cachepolicy/cachecontrol.go:
+```go
+func cacheControlAge(header http.Header, directiveName string) (time.Duration, bool) {
+    for _, field := range header.Values("Cache-Control") {
+        for directive := range elements(field) {
+            directive, hasArgument := strings.Cut(directive, "=")
+            if !hasArgument {
+                continue
+            }
+...
+```
+`strings.Cut` returns `hasArgument=false` when the directive does not contain `=`. The loop skips the bare directive and continues. If no other valid directive is present, `FreshnessLifetime` falls back to `defaultTTL, true`. If another directive is present (e.g. `s-maxage, max-age=30`), skipping bare `s-maxage` erroneously allows `max-age=30` to take effect, violating RFC 9111 §5.2.2.10 (first occurrence precedence). Under RFC 9111 §4.2.1, invalid/unrecognized max-age directives cannot provide freshness lifetime and must not cause caching under default fallback TTL.

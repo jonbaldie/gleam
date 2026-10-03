@@ -1,0 +1,54 @@
+=== Bug #129: If-Modified-Since evaluates against first Last-Modified header when response has multiple Last-Modified headers ===
+Issue URL: https://github.com/jonbaldie/gleam/issues/129
+
+1. Live Proxy Reproduction:
+Origin stores a resource with two Last-Modified headers (01:00:00 GMT and 03:00:00 GMT):
+
+$ curl -i http://127.0.0.1:19901/multi-last-modified
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=300
+Content-Length: 13
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:35:56 GMT
+Last-Modified: Sat, 03 Oct 2026 01:00:00 GMT
+Last-Modified: Sat, 03 Oct 2026 03:00:00 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+multi-lm-test
+
+Client sends conditional request with If-Modified-Since set to 02:00:00 GMT:
+$ curl -i -H 'If-Modified-Since: Sat, 03 Oct 2026 02:00:00 GMT' http://127.0.0.1:19901/multi-last-modified
+HTTP/1.1 304 Not Modified
+Age: 154
+Cache-Control: public, max-age=300
+Date: Sat, 03 Oct 2026 01:35:56 GMT
+Last-Modified: Sat, 03 Oct 2026 01:00:00 GMT
+Last-Modified: Sat, 03 Oct 2026 03:00:00 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+Actual result: Gleam returns 304 Not Modified.
+Expected result: Gleam MUST ignore Last-Modified per RFC 9110 §8.8.2, thereby ignoring If-Modified-Since per RFC 9110 §13.1.3, and return 200 OK with the representation body (since modification at 03:00:00 GMT is newer than client date 02:00:00 GMT, and ambiguous multiple headers cannot be relied upon).
+
+2. Code Level Reproducer (go run reproducers.go):
+```go
+reqH := http.Header{"If-Modified-Since": []string{"Sat, 03 Oct 2026 02:00:00 GMT"}}
+storedH := http.Header{
+    "Last-Modified": []string{"Sat, 03 Oct 2026 01:00:00 GMT", "Sat, 03 Oct 2026 03:00:00 GMT"},
+}
+notMod := cachepolicy.NotModified(reqH, http.StatusOK, storedH)
+// Output: NotModified=true
+// RFC 9110 §8.8.2 says MUST ignore Last-Modified if >1 member, so should be false.
+```
+
+Root Cause Analysis:
+In cachepolicy/conditions.go:
+```go
+func NotModified(requestHeader http.Header, storedStatusCode int, storedHeader http.Header) bool {
+...
+    if ifModifiedSince, ok := parseHTTPDate(requestHeader.Get("If-Modified-Since")); ok {
+        return ifModifiedSinceSatisfied(ifModifiedSince, storedHeader.Get("Last-Modified"))
+    }
+    return false
+}
+```
+`storedHeader.Get("Last-Modified")` returns only the first slice element when multiple header lines are present. Unlike `httpdate.go`'s `parseHTTPDateHeader` which correctly checks `len(values) != 1` for Date headers, `NotModified` relies on `Get()` directly. Per RFC 9110 §8.8.2 and §13.1.3, when multiple `Last-Modified` values exist, `Last-Modified` must be ignored, causing `If-Modified-Since` to be ignored, and `NotModified` should return `false`.
