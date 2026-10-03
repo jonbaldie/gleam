@@ -1,0 +1,62 @@
+=== Journey 3: Cache Directives & Conditional Requests ===
+Target: Gleam running on port 19901 backed by Redis (16379) and Python mock origin (19800)
+
+1. s-maxage Precedence over max-age:
+Origin returns: "Cache-Control: public, s-maxage=30, max-age=300"
+Shared cache must respect s-maxage (30s) over max-age (300s).
+
+$ curl -i http://127.0.0.1:19901/s-maxage-test
+HTTP/1.1 200 OK
+Cache-Control: public, s-maxage=30, max-age=300
+Content-Length: 13
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:38:10 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+s-maxage-wins
+
+Inspect Redis TTL:
+$ redis-cli -p 16379 ttl "127.0.0.1:19901#/s-maxage-test"
+(integer) 28
+(Confirms TTL is bounded by s-maxage=30 rather than max-age=300)
+
+2. ETag Matching (Strong, Weak, and Asterisk):
+Origin returns: ETag: "abc"
+
+$ curl -i http://127.0.0.1:19901/etag-resource
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=60
+Content-Length: 50
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:38:33 GMT
+Etag: "abc"
+Server: BaseHTTP/0.6 Python/3.14.5
+
+01234567890123456789012345678901234567890123456789
+
+a) Strong match:
+$ curl -i -H 'If-None-Match: "abc"' http://127.0.0.1:19901/etag-resource
+HTTP/1.1 304 Not Modified
+Age: 0
+Cache-Control: public, max-age=60
+Date: Sat, 03 Oct 2026 01:38:33 GMT
+Etag: "abc"
+Server: BaseHTTP/0.6 Python/3.14.5
+
+b) Weak match (W/"abc" matches "abc" under weak comparison rules of RFC 9110 §13.1.2):
+$ curl -i -H 'If-None-Match: W/"abc"' http://127.0.0.1:19901/etag-resource
+HTTP/1.1 304 Not Modified
+Age: 0
+Cache-Control: public, max-age=60
+Date: Sat, 03 Oct 2026 01:38:33 GMT
+Etag: "abc"
+Server: BaseHTTP/0.6 Python/3.14.5
+
+c) Wildcard match (If-None-Match: *):
+$ curl -i -H 'If-None-Match: *' http://127.0.0.1:19901/etag-resource
+HTTP/1.1 304 Not Modified
+Age: 0
+Cache-Control: public, max-age=60
+Date: Sat, 03 Oct 2026 01:38:33 GMT
+Etag: "abc"
+Server: BaseHTTP/0.6 Python/3.14.5

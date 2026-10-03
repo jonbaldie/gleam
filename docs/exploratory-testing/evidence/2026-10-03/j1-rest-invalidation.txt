@@ -1,0 +1,102 @@
+=== Journey 1: REST API / Dynamic Proxy Semantics ===
+Target: Gleam running on port 19901 backed by Redis (16379) and Python mock origin (19800)
+
+1. GET /items/1 (Cold cache miss):
+$ curl -i http://127.0.0.1:19901/items/1
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=60
+Content-Length: 27
+Content-Type: application/json
+Date: Sat, 03 Oct 2026 01:37:48 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+{"id": 1, "name": "widget"}
+
+2. GET /items/1 (Warm cache hit):
+$ curl -i http://127.0.0.1:19901/items/1
+HTTP/1.1 200 OK
+Age: 2
+Cache-Control: public, max-age=60
+Content-Length: 27
+Content-Type: application/json
+Date: Sat, 03 Oct 2026 01:37:48 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+{"id": 1, "name": "widget"}
+
+3. PUT /items/1 (Resource update & cache invalidation):
+$ curl -i -X PUT -d '{"name":"updated"}' http://127.0.0.1:19901/items/1
+HTTP/1.1 200 OK
+Content-Length: 0
+Date: Sat, 03 Oct 2026 01:37:52 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+4. GET /items/1 (Cache miss following PUT invalidation):
+$ curl -i http://127.0.0.1:19901/items/1
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=60
+Content-Length: 27
+Content-Type: application/json
+Date: Sat, 03 Oct 2026 01:37:52 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+{"id": 1, "name": "widget"}
+
+5. Query Parameter Isolation (?fields=name vs /items/1):
+$ curl -i 'http://127.0.0.1:19901/items/1?fields=name'
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=60
+Content-Length: 10
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:37:54 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+default-ok
+
+$ curl -i 'http://127.0.0.1:19901/items/1?fields=name'
+HTTP/1.1 200 OK
+Age: 0
+Cache-Control: public, max-age=60
+Content-Length: 10
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:37:54 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+default-ok
+
+6. URL-Encoded Characters:
+$ curl -i 'http://127.0.0.1:19901/path%20with%20spaces'
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=60
+Content-Length: 10
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:37:57 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+default-ok
+
+$ curl -i 'http://127.0.0.1:19901/path%2Fwith%2Fslashes'
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=60
+Content-Length: 10
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:37:57 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+default-ok
+
+7. ServeMux Path Sanitization (Double Slashes):
+$ curl -i 'http://127.0.0.1:19901/path//double//slashes'
+HTTP/1.1 307 Temporary Redirect
+Content-Type: text/html; charset=utf-8
+Location: /path/double/slashes
+Date: Sat, 03 Oct 2026 01:37:57 GMT
+Content-Length: 56
+
+<a href="/path/double/slashes">Temporary Redirect</a>.
+
+8. OPTIONS * Target:
+$ curl -i -X OPTIONS --request-target '*' 'http://127.0.0.1:19901'
+HTTP/1.1 200 OK
+Content-Length: 0
+Date: Sat, 03 Oct 2026 01:38:00 GMT

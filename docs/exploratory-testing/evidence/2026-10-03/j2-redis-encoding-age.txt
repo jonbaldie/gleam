@@ -1,0 +1,76 @@
+=== Journey 2: Shared Redis Caching & Transports ===
+Target: Gleam running on port 19901 backed by Redis (16379) and Python mock origin (19800)
+
+1. Caching 204 No Content (Empty Body Storage & Replay):
+$ curl -i http://127.0.0.1:19901/status-204
+HTTP/1.1 204 No Content
+Cache-Control: public, max-age=60
+Date: Sat, 03 Oct 2026 01:38:03 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+$ curl -i http://127.0.0.1:19901/status-204
+HTTP/1.1 204 No Content
+Age: 0
+Cache-Control: public, max-age=60
+Date: Sat, 03 Oct 2026 01:38:03 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+2. Chunked Transfer-Encoding Translation:
+Origin sends "Transfer-Encoding: chunked" without Content-Length.
+Gleam caches the buffered payload and serves it on hit with computed "Content-Length: 20".
+
+$ curl -i http://127.0.0.1:19901/chunked-no-len
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=60
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:38:05 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+Transfer-Encoding: chunked
+
+hello chunked world
+
+$ curl -i http://127.0.0.1:19901/chunked-no-len
+HTTP/1.1 200 OK
+Age: 0
+Cache-Control: public, max-age=60
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:38:05 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+Content-Length: 20
+
+hello chunked world
+
+3. Initial Age Header Deduction & Expiration in Redis:
+Origin sends "Age: 50" with "Cache-Control: public, max-age=60".
+Remaining freshness lifetime is 10 seconds (60 - 50 = 10s).
+
+$ curl -i http://127.0.0.1:19901/initial-age-test
+HTTP/1.1 200 OK
+Age: 50
+Cache-Control: public, max-age=60
+Content-Length: 11
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:38:07 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+initial-age
+
+Inspect Redis TTL immediately after caching:
+$ redis-cli -p 16379 ttl "127.0.0.1:19901#/initial-age-test"
+(integer) 8
+
+Wait 10 seconds for expiration:
+$ redis-cli -p 16379 ttl "127.0.0.1:19901#/initial-age-test"
+(integer) -2
+
+Subsequent request misses the cache and reaches origin:
+$ curl -i http://127.0.0.1:19901/initial-age-test
+HTTP/1.1 200 OK
+Age: 50
+Cache-Control: public, max-age=60
+Content-Length: 11
+Content-Type: text/plain
+Date: Sat, 03 Oct 2026 01:38:22 GMT
+Server: BaseHTTP/0.6 Python/3.14.5
+
+initial-age

@@ -68,7 +68,7 @@ This uses [version 8](https://github.com/redis/go-redis) of `go-redis` so if you
 
 ## Exploratory testing
 
-Reports from hands-on testing passes, with replay steps and evidence, live in [`docs/exploratory-testing/`](docs/exploratory-testing/). Latest: [2026-09-26](docs/exploratory-testing/2026-09-26-exploratory-testing.md).
+Reports from hands-on testing passes, with replay steps and evidence, live in [`docs/exploratory-testing/`](docs/exploratory-testing/). Latest: [2026-10-03](docs/exploratory-testing/2026-10-03-exploratory-testing.md).
 
 ## Naming
 
