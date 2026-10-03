@@ -94,6 +94,22 @@ func TestNotModifiedIfModifiedSince(t *testing.T) {
 	}
 }
 
+func TestNotModifiedIgnoresMultipleLastModifiedValues(t *testing.T) {
+	reqHeader := http.Header{
+		"If-Modified-Since": {"Sat, 03 Oct 2026 02:00:00 GMT"},
+	}
+	storedHeader := http.Header{
+		"Last-Modified": {
+			"Sat, 03 Oct 2026 01:00:00 GMT",
+			"Sat, 03 Oct 2026 03:00:00 GMT",
+		},
+	}
+
+	if got := notModified(reqHeader, storedHeader); got {
+		t.Fatal("NotModified() = true, want false when Last-Modified has multiple values")
+	}
+}
+
 func TestNotModifiedPrecedenceAndStatus(t *testing.T) {
 	const lastModified = "Thu, 10 Sep 2026 03:58:45 GMT"
 	stored := http.Header{"Etag": {`"a"`}, "Last-Modified": {lastModified}}
