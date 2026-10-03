@@ -14,8 +14,11 @@ import (
 func cacheControlAge(header http.Header, target string) (time.Duration, bool) {
 	for _, directive := range cacheControlDirectives(header) {
 		name, argument, hasArgument := strings.Cut(directive, "=")
-		if !hasArgument || !strings.EqualFold(strings.TrimSpace(name), target) {
+		if !strings.EqualFold(strings.TrimSpace(name), target) {
 			continue
+		}
+		if !hasArgument {
+			return 0, true
 		}
 		age, ok := parseCacheControlAge(argument)
 		if !ok {

@@ -75,6 +75,24 @@ func TestFreshnessLifetime(t *testing.T) {
 			wantStore: false,
 		},
 		{
+			name:      "bare max-age skips storage",
+			header:    http.Header{"Cache-Control": []string{"public, max-age"}},
+			wantTTL:   0,
+			wantStore: false,
+		},
+		{
+			name:      "bare s-maxage skips storage",
+			header:    http.Header{"Cache-Control": []string{"public, s-maxage"}},
+			wantTTL:   0,
+			wantStore: false,
+		},
+		{
+			name:      "bare s-maxage takes precedence over max-age",
+			header:    http.Header{"Cache-Control": []string{"s-maxage, max-age=30"}},
+			wantTTL:   0,
+			wantStore: false,
+		},
+		{
 			name:      "malformed s-maxage skips storage despite max-age",
 			header:    http.Header{"Cache-Control": []string{"s-maxage=bad, max-age=30"}},
 			wantTTL:   0,

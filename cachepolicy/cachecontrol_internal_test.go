@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+func TestCacheControlAgeTreatsBareFreshnessDirectivesAsInvalid(t *testing.T) {
+	for _, name := range []string{"max-age", "s-maxage"} {
+		t.Run(name, func(t *testing.T) {
+			age, found := cacheControlAge(http.Header{"Cache-Control": []string{name}}, name)
+			if !found || age != 0 {
+				t.Fatalf("cacheControlAge(bare %s) = (%v, %v), want (0, true)", name, age, found)
+			}
+		})
+	}
+}
+
 // A quoted field-name list must not hide a following freshness directive from
 // the age parser.
 func TestCacheControlAgeSkipsQuotedFieldNameLists(t *testing.T) {
