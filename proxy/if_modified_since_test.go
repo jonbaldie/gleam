@@ -85,6 +85,37 @@ func TestBugHuntMultiValueIfModifiedSinceIsIgnored(t *testing.T) {
 	}
 }
 
+// TestBugHuntMultipleLastModifiedIgnoresIfModifiedSince reproduces
+// jonbaldie/gleam#129: a cache hit evaluated If-Modified-Since against only the
+// first stored Last-Modified field, but RFC 9110 section 8.8.2 requires
+// ignoring a Last-Modified field with more than one member, which leaves no
+// modification date to evaluate If-Modified-Since against (section 13.1.3).
+func TestBugHuntMultipleLastModifiedIgnoresIfModifiedSince(t *testing.T) {
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header()["Last-Modified"] = []string{
+			"Sat, 03 Oct 2026 01:00:00 GMT",
+			"Sat, 03 Oct 2026 03:00:00 GMT",
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("body"))
+	})
+
+	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
+
+	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	conditional.Header.Set("If-Modified-Since", "Sat, 03 Oct 2026 02:00:00 GMT")
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, conditional)
+
+	if second.Code != http.StatusOK {
+		t.Fatalf("expected If-Modified-Since to be ignored with multiple Last-Modified fields, got status %d, want %d", second.Code, http.StatusOK)
+	}
+	if body := second.Body.String(); body != "body" {
+		t.Fatalf("expected full representation body, got %q", body)
+	}
+}
+
 func TestProxyConditionalGETWithIfModifiedSince(t *testing.T) {
 	const lastModified = "Thu, 10 Sep 2026 03:58:45 GMT"
 	const earlier = "Thu, 01 Jan 2026 00:00:00 GMT"
