@@ -94,6 +94,29 @@ func TestNotModifiedIfModifiedSince(t *testing.T) {
 	}
 }
 
+// RFC 9110 section 8.8.2: a Last-Modified field with more than one member is
+// ignored, so the resource has no modification date and If-Modified-Since is
+// ignored too (section 13.1.3).
+func TestNotModifiedIfModifiedSinceMultipleLastModified(t *testing.T) {
+	tests := []struct {
+		name         string
+		lastModified []string
+	}{
+		{name: "later value after condition", lastModified: []string{"Sat, 03 Oct 2026 01:00:00 GMT", "Sat, 03 Oct 2026 03:00:00 GMT"}},
+		{name: "both values before condition", lastModified: []string{"Sat, 03 Oct 2026 01:00:00 GMT", "Sat, 03 Oct 2026 01:30:00 GMT"}},
+		{name: "identical values", lastModified: []string{"Sat, 03 Oct 2026 01:00:00 GMT", "Sat, 03 Oct 2026 01:00:00 GMT"}},
+		{name: "unparseable then valid value", lastModified: []string{"garbage", "Sat, 03 Oct 2026 01:00:00 GMT"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqHeader := http.Header{"If-Modified-Since": {"Sat, 03 Oct 2026 02:00:00 GMT"}}
+			if notModified(reqHeader, http.Header{"Last-Modified": tt.lastModified}) {
+				t.Fatalf("NotModified with Last-Modified %q = true, want false", tt.lastModified)
+			}
+		})
+	}
+}
+
 func TestNotModifiedPrecedenceAndStatus(t *testing.T) {
 	const lastModified = "Thu, 10 Sep 2026 03:58:45 GMT"
 	stored := http.Header{"Etag": {`"a"`}, "Last-Modified": {lastModified}}
