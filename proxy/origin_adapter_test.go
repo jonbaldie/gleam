@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// The origin that NewWithTransport proxies to in these tests. Its traffic
+// The origin that NewOriginReverseProxy proxies to in these tests. Its traffic
 // never leaves the process: the transport each test passes serves it.
 var testOriginURL = &url.URL{Scheme: "http", Host: "origin.internal:8081"}
 
@@ -89,7 +89,7 @@ func TestProxyAdapterStreamsFirstChunkBeforeOriginFinishes(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
-			handler := NewWithTransport(testOriginURL, newMockCache(), time.Minute, defaultVaryHeaders, streamingOrigin())
+			handler := NewHandler(NewOriginReverseProxy(testOriginURL, streamingOrigin()), newMockCache(), time.Minute, defaultVaryHeaders)
 			client := newFlushRecorder()
 			handler.ServeHTTP(client, httptest.NewRequest(method, "/stream", strings.NewReader("payload")))
 
@@ -119,7 +119,7 @@ func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
 			Request:    r,
 		}, nil
 	})
-	handler := NewWithTransport(testOriginURL, newMockCache(), time.Minute, defaultVaryHeaders, transport)
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, transport), newMockCache(), time.Minute, defaultVaryHeaders)
 
 	clientConn, proxyConn := net.Pipe()
 	defer clientConn.Close()
@@ -171,14 +171,14 @@ func readN(t *testing.T, r io.Reader, n int) string {
 	return string(buf)
 }
 
-func TestNewWithTransportSendsOriginRequestsThroughTransport(t *testing.T) {
+func TestNewOriginReverseProxySendsOriginRequestsThroughTransport(t *testing.T) {
 	t.Parallel()
 	var originPath string
 	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originPath = r.URL.Path
 		_, _ = w.Write([]byte("from transport"))
 	})
-	handler := NewWithTransport(testOriginURL, newMockCache(), time.Minute, nil, handlerTransport(origin))
+	handler := NewOriginReverseProxy(testOriginURL, handlerTransport(origin))
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/via-transport", nil))

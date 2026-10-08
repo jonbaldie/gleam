@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -30,7 +31,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 				_, _ = fmt.Fprint(w, "ok")
 			})
 
-			handler := NewWithTransport(testOriginURL, newMockCache(), time.Minute, nil, handlerTransport(origin))
+			handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), newMockCache(), time.Minute, nil)
 			request := httptest.NewRequest(tt.method, "http://client.example:8080/x", nil)
 			request.Host = "client.example:8080"
 			if tt.cacheBypass {
@@ -62,7 +63,7 @@ func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
 	})
 
 	c := newMockCache()
-	handler := NewWithTransport(testOriginURL, c, time.Minute, nil, handlerTransport(origin))
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	requestA := httptest.NewRequest(http.MethodGet, "http://client-a.example/shared", nil)
 	requestA.Host = "client-a.example"
 	requestB := httptest.NewRequest(http.MethodGet, "http://client-b.example/shared", nil)
@@ -107,7 +108,7 @@ func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
 	})
 
 	c := newMockCache()
-	handler := NewWithTransport(testOriginURL, c, time.Minute, nil, handlerTransport(origin))
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	getRequest := httptest.NewRequest(http.MethodGet, "http://client.example/resource", nil)
 	getRequest.Host = "client.example"
 	handler.ServeHTTP(httptest.NewRecorder(), getRequest)
@@ -126,5 +127,34 @@ func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
 	}
 	if _, found := c.Get(key); found {
 		t.Fatal("successful POST did not invalidate the inbound Host cache entry")
+	}
+}
+
+// With no transport supplied, the standard constructors reach the origin over
+// http.DefaultTransport and still forward the origin's Host.
+func TestNewWithVaryHeadersForwardsOriginHostOverDefaultTransport(t *testing.T) {
+	t.Parallel()
+	var gotHost string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		_, _ = fmt.Fprint(w, "ok")
+	}))
+	defer origin.Close()
+	originURL, err := url.Parse(origin.URL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+	handler := NewWithVaryHeaders(originURL, newMockCache(), time.Minute, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "http://client.example:8080/x", nil)
+	request.Host = "client.example:8080"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if got := response.Body.String(); got != "ok" {
+		t.Fatalf("response body = %q, want %q", got, "ok")
+	}
+	if gotHost != originURL.Host {
+		t.Fatalf("origin Host = %q, want %q", gotHost, originURL.Host)
 	}
 }
