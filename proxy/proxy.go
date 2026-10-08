@@ -24,7 +24,14 @@ func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {
 }
 
 func NewWithVaryHeaders(origin *url.URL, c cache.Cache, ttl time.Duration, varyHeaders []string) http.Handler {
-	return NewHandler(newOriginReverseProxy(origin), c, ttl, varyHeaders)
+	return NewWithTransport(origin, c, ttl, varyHeaders, nil)
+}
+
+// NewWithTransport is NewWithVaryHeaders with the outbound transport to the
+// origin supplied by the caller, for custom TLS, timeouts or connection
+// pooling. A nil transport uses http.DefaultTransport.
+func NewWithTransport(origin *url.URL, c cache.Cache, ttl time.Duration, varyHeaders []string, transport http.RoundTripper) http.Handler {
+	return NewHandler(newOriginReverseProxy(origin, transport), c, ttl, varyHeaders)
 }
 
 // NewHandler wraps an upstream handler with this shared cache. The upstream
@@ -43,9 +50,10 @@ func NewHandler(upstream http.Handler, c cache.Cache, ttl time.Duration, varyHea
 }
 
 // newOriginReverseProxy is the standard upstream adapter: a reverse proxy to
-// a single remote origin.
-func newOriginReverseProxy(origin *url.URL) *httputil.ReverseProxy {
+// a single remote origin, reached through transport.
+func newOriginReverseProxy(origin *url.URL, transport http.RoundTripper) *httputil.ReverseProxy {
 	p := httputil.NewSingleHostReverseProxy(origin)
+	p.Transport = transport
 	director := p.Director
 	p.Director = func(req *http.Request) {
 		director(req)

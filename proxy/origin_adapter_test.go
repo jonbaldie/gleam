@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// The origin that New and NewWithVaryHeaders proxy to in these tests. Its
-// traffic never leaves the process: useInMemoryOrigin routes it.
+// The origin that NewWithTransport proxies to in these tests. Its traffic
+// never leaves the process: the transport each test passes serves it.
 var testOriginURL = &url.URL{Scheme: "http", Host: "origin.internal:8081"}
 
 // roundTripFunc lets the reverse-proxy adapter reach an in-process origin
@@ -38,23 +38,18 @@ func handlerTransport(origin http.Handler) http.RoundTripper {
 	})
 }
 
-// useInMemoryOrigin routes the reverse-proxy adapter's outbound requests
-// through transport for the rest of the test. The adapter uses
-// http.DefaultTransport, so tests that call this must not run in parallel.
-func useInMemoryOrigin(t *testing.T, transport http.RoundTripper) {
-	t.Helper()
-	previous := http.DefaultTransport
-	http.DefaultTransport = transport
-	t.Cleanup(func() { http.DefaultTransport = previous })
-}
-
 func TestNewSeparatesCachedGetsByDefaultVaryHeaders(t *testing.T) {
-	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=60")
 		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
-	})
-	useInMemoryOrigin(t, handlerTransport(origin))
-	handler := New(testOriginURL, newMockCache(), time.Minute)
+	}))
+	defer origin.Close()
+	originURL, err := url.Parse(origin.URL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+	handler := New(originURL, newMockCache(), time.Minute)
 
 	for _, credentials := range []string{"Bearer alpha", "Bearer beta"} {
 		req := httptest.NewRequest(http.MethodGet, "/profile", nil)
@@ -90,10 +85,11 @@ func streamingOrigin() http.RoundTripper {
 }
 
 func TestProxyAdapterStreamsFirstChunkBeforeOriginFinishes(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		t.Run(method, func(t *testing.T) {
-			useInMemoryOrigin(t, streamingOrigin())
-			handler := New(testOriginURL, newMockCache(), time.Minute)
+			t.Parallel()
+			handler := NewWithTransport(testOriginURL, newMockCache(), time.Minute, defaultVaryHeaders, streamingOrigin())
 			client := newFlushRecorder()
 			handler.ServeHTTP(client, httptest.NewRequest(method, "/stream", strings.NewReader("payload")))
 
@@ -110,10 +106,11 @@ func TestProxyAdapterStreamsFirstChunkBeforeOriginFinishes(t *testing.T) {
 // The reverse-proxy adapter tunnels a GET protocol upgrade between the client
 // and the origin; the cache must neither answer nor break it.
 func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
+	t.Parallel()
 	originConn, originPeer := net.Pipe()
 	defer originPeer.Close()
 	var originRequestHeader http.Header
-	useInMemoryOrigin(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		originRequestHeader = r.Header.Clone()
 		return &http.Response{
 			StatusCode: http.StatusSwitchingProtocols,
@@ -121,8 +118,8 @@ func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
 			Body:       originConn,
 			Request:    r,
 		}, nil
-	}))
-	handler := New(testOriginURL, newMockCache(), time.Minute)
+	})
+	handler := NewWithTransport(testOriginURL, newMockCache(), time.Minute, defaultVaryHeaders, transport)
 
 	clientConn, proxyConn := net.Pipe()
 	defer clientConn.Close()
@@ -172,4 +169,24 @@ func readN(t *testing.T, r io.Reader, n int) string {
 		t.Fatalf("read %d bytes: %v", n, err)
 	}
 	return string(buf)
+}
+
+func TestNewWithTransportSendsOriginRequestsThroughTransport(t *testing.T) {
+	t.Parallel()
+	var originPath string
+	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originPath = r.URL.Path
+		_, _ = w.Write([]byte("from transport"))
+	})
+	handler := NewWithTransport(testOriginURL, newMockCache(), time.Minute, nil, handlerTransport(origin))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/via-transport", nil))
+
+	if got := rec.Body.String(); got != "from transport" {
+		t.Fatalf("body = %q, want %q", got, "from transport")
+	}
+	if originPath != "/via-transport" {
+		t.Fatalf("origin path = %q, want %q", originPath, "/via-transport")
+	}
 }
