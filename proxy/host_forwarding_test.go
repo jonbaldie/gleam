@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 )
 
 func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		method      string
@@ -21,6 +23,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var gotHost string
 			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				gotHost = r.Host
@@ -28,8 +31,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 				_, _ = fmt.Fprint(w, "ok")
 			})
 
-			useInMemoryOrigin(t, handlerTransport(origin))
-			handler := NewWithVaryHeaders(testOriginURL, newMockCache(), time.Minute, nil)
+			handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), newMockCache(), time.Minute, nil)
 			request := httptest.NewRequest(tt.method, "http://client.example:8080/x", nil)
 			request.Host = "client.example:8080"
 			if tt.cacheBypass {
@@ -52,6 +54,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 }
 
 func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
+	t.Parallel()
 	var originCalls int
 	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls++
@@ -59,9 +62,8 @@ func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", originCalls)
 	})
 
-	useInMemoryOrigin(t, handlerTransport(origin))
 	c := newMockCache()
-	handler := NewWithVaryHeaders(testOriginURL, c, time.Minute, nil)
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	requestA := httptest.NewRequest(http.MethodGet, "http://client-a.example/shared", nil)
 	requestA.Host = "client-a.example"
 	requestB := httptest.NewRequest(http.MethodGet, "http://client-b.example/shared", nil)
@@ -95,6 +97,7 @@ func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
 }
 
 func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
+	t.Parallel()
 	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Cache-Control", "public, max-age=60")
@@ -104,9 +107,8 @@ func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	useInMemoryOrigin(t, handlerTransport(origin))
 	c := newMockCache()
-	handler := NewWithVaryHeaders(testOriginURL, c, time.Minute, nil)
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	getRequest := httptest.NewRequest(http.MethodGet, "http://client.example/resource", nil)
 	getRequest.Host = "client.example"
 	handler.ServeHTTP(httptest.NewRecorder(), getRequest)
@@ -125,5 +127,34 @@ func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
 	}
 	if _, found := c.Get(key); found {
 		t.Fatal("successful POST did not invalidate the inbound Host cache entry")
+	}
+}
+
+// With no transport supplied, the standard constructors reach the origin over
+// http.DefaultTransport and still forward the origin's Host.
+func TestNewWithVaryHeadersForwardsOriginHostOverDefaultTransport(t *testing.T) {
+	t.Parallel()
+	var gotHost string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		_, _ = fmt.Fprint(w, "ok")
+	}))
+	defer origin.Close()
+	originURL, err := url.Parse(origin.URL)
+	if err != nil {
+		t.Fatalf("parse origin URL: %v", err)
+	}
+	handler := NewWithVaryHeaders(originURL, newMockCache(), time.Minute, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "http://client.example:8080/x", nil)
+	request.Host = "client.example:8080"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if got := response.Body.String(); got != "ok" {
+		t.Fatalf("response body = %q, want %q", got, "ok")
+	}
+	if gotHost != originURL.Host {
+		t.Fatalf("origin Host = %q, want %q", gotHost, originURL.Host)
 	}
 }
