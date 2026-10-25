@@ -1,0 +1,107 @@
+=== GLEAM EXPLORATORY TESTING SUITE ===
+Timestamp: 2026-09-19T01:29:46Z
+Environment: Go , macOS
+
+--- Step 1: Building Gleam binary ---
+Build succeeded: bin/gleam created.
+
+========================================================
+JOURNEY 1: Caching Lifecycle, Freshness, & Cache-Control
+========================================================
+
+>>> RUNNING: J1.1 Ordinary Path: Miss -> Cache -> Hit with Age Header
+Req 1 (Miss): status=200, body="representation-v1", Age=""
+Req 2 (Hit): status=200, body="representation-v1", Age="2"
+PASS: J1.1 Ordinary Path: Miss -> Cache -> Hit with Age Header
+
+>>> RUNNING: J1.2 Variation: Response Cache-Control no-store is never cached
+Req 1: body="secret-v1", Req 2: body="secret-v2", originCalls=2
+PASS: J1.2 Variation: Response Cache-Control no-store is never cached
+
+>>> RUNNING: J1.3 Variation: Response Cache-Control private is not cached in shared cache
+Req 1: body="user-data-v1", Req 2: body="user-data-v2", originCalls=2
+PASS: J1.3 Variation: Response Cache-Control private is not cached in shared cache
+
+>>> RUNNING: J1.4 Variation: Response with Set-Cookie is not cached in shared cache
+Set-Cookie test: originCalls=2
+PASS: J1.4 Variation: Response with Set-Cookie is not cached in shared cache
+
+>>> RUNNING: J1.5 Variation: Client request Cache-Control no-cache bypasses cache
+Req with no-cache: body="cached-data-v2", originCalls=2
+PASS: J1.5 Variation: Client request Cache-Control no-cache bypasses cache
+
+>>> RUNNING: J1.6 Variation: Uncacheable HTTP status codes (404, 500) are not stored
+404 Not Found test: originCalls=2
+PASS: J1.6 Variation: Uncacheable HTTP status codes (404, 500) are not stored
+
+>>> RUNNING: J1.7 Variation: Response with past Expires is immediately stale and not stored
+Past Expires test: originCalls=2
+PASS: J1.7 Variation: Response with past Expires is immediately stale and not stored
+
+========================================================
+JOURNEY 2: Conditional Requests & Validation
+========================================================
+
+>>> RUNNING: J2.1 Ordinary Path: If-None-Match with matching ETag returns 304
+Req 1 (Miss): status=200, body="payload-1"
+Req 2 (Conditional): status=304, body="", Age="0", originCalls=1
+PASS: J2.1 Ordinary Path: If-None-Match with matching ETag returns 304
+
+>>> RUNNING: J2.2 Variation: Weak ETag (W/"v1") matches in If-None-Match
+Weak ETag test: status=304
+PASS: J2.2 Variation: Weak ETag (W/"v1") matches in If-None-Match
+
+>>> RUNNING: J2.3 Variation: If-Modified-Since with matching date returns 304
+If-Modified-Since matching test: status=304
+PASS: J2.3 Variation: If-Modified-Since with matching date returns 304
+
+>>> RUNNING: J2.4 Variation: If-None-Match takes precedence over If-Modified-Since
+Precedence test: status=200, body="precedence-payload"
+PASS: J2.4 Variation: If-None-Match takes precedence over If-Modified-Since
+
+========================================================
+JOURNEY 3: Mutations, Invalidation, & Vary Isolation
+========================================================
+
+>>> RUNNING: J3.1 Ordinary Path: POST invalidates cached GET response
+Req 1 (Miss): "initial-data", Req 2 (Hit): "initial-data", POST status: 204, Req 3 (Post-Invalidate): "updated-data", originCalls=2
+PASS: J3.1 Ordinary Path: POST invalidates cached GET response
+
+>>> RUNNING: J3.2 Variation: Failed unsafe request (500 Error) does NOT invalidate cache
+Failed POST test: POST status=500, subsequent GET body="stable-data", originCalls=1
+PASS: J3.2 Variation: Failed unsafe request (500 Error) does NOT invalidate cache
+
+>>> RUNNING: J3.3 Variation: Safe non-GET method (HEAD) does not invalidate cache
+HEAD test: originCalls=1, body="cached-data"
+PASS: J3.3 Variation: Safe non-GET method (HEAD) does not invalidate cache
+
+>>> RUNNING: J3.4 Variation: Vary Cookie isolates cache entries for different users
+Alice 1: "User-Session: user=Alice", Bob 1: "User-Session: user=Bob", Alice 2: "User-Session: user=Alice", originCalls=2
+PASS: J3.4 Variation: Vary Cookie isolates cache entries for different users
+
+>>> RUNNING: J3.5 Variation: Query string variation creates distinct cache keys
+q=foo 1: "Query: q=foo", q=bar: "Query: q=bar", q=foo 2: "Query: q=foo", originCalls=2
+PASS: J3.5 Variation: Query string variation creates distinct cache keys
+
+>>> RUNNING: J1.8 Variation: Range request bypasses cache in both directions
+Full GET body="full content", Range GET body="partial", originCalls=2
+PASS: J1.8 Variation: Range request bypasses cache in both directions
+
+>>> RUNNING: J1.9 Variation: Authenticated request without public directive is not reused across clients
+Auth req 1: "auth-response-1", Auth req 2: "auth-response-2", originCalls=2
+PASS: J1.9 Variation: Authenticated request without public directive is not reused across clients
+
+>>> RUNNING: J2.5 Variation: Multiple comma-separated ETags in If-None-Match
+Multi-ETag test status: 304
+PASS: J2.5 Variation: Multiple comma-separated ETags in If-None-Match
+
+>>> RUNNING: J3.6 Variation: PUT, DELETE, and PATCH invalidate cached GET
+Method PUT: subsequent GET body="mutated-by-PUT", originCalls=2
+Method DELETE: subsequent GET body="mutated-by-DELETE", originCalls=2
+Method PATCH: subsequent GET body="mutated-by-PATCH", originCalls=2
+PASS: J3.6 Variation: PUT, DELETE, and PATCH invalidate cached GET
+
+========================================================
+SUMMARY OF RESULTS
+Total tests: 20, Passed: 20, Failed: 0
+========================================================

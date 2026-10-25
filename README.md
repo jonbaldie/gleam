@@ -30,6 +30,16 @@ Gleam will cache GET requests and serve cached responses when available, improvi
 
 As a shared cache, Gleam will not reuse a response for a request carrying an `Authorization` header unless that response explicitly permits shared caching with `Cache-Control: public`, `must-revalidate`, or `s-maxage` (RFC 9111 section 3.5).
 
+## Testing
+
+Run unit and integration tests:
+
+```bash
+go test ./...
+```
+
+For exploratory testing reports and driving harnesses, see [`docs/exploratory-testing/2026-09-19-exploratory-testing.md`](docs/exploratory-testing/2026-09-19-exploratory-testing.md).
+
 ## Linting
 
 The repository lint gate is:
