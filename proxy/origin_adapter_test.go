@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// The origin that NewOriginReverseProxy proxies to in these tests. Its traffic
-// never leaves the process: the transport each test passes serves it.
 var testOriginURL = &url.URL{Scheme: "http", Host: "origin.internal:8081"}
 
 // roundTripFunc lets the reverse-proxy adapter reach an in-process origin
