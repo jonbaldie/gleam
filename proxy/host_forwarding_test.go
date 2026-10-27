@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		method      string
@@ -21,6 +24,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var gotHost string
 			origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				gotHost = r.Host
@@ -28,8 +32,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 				_, _ = fmt.Fprint(w, "ok")
 			})
 
-			useInMemoryOrigin(t, handlerTransport(origin))
-			handler := NewWithVaryHeaders(testOriginURL, newMockCache(), time.Minute, nil)
+			handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), newMockCache(), time.Minute, nil)
 			request := httptest.NewRequest(tt.method, "http://client.example:8080/x", nil)
 			request.Host = "client.example:8080"
 			if tt.cacheBypass {
@@ -52,6 +55,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 }
 
 func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
+	t.Parallel()
 	var originCalls int
 	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originCalls++
@@ -59,9 +63,8 @@ func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", originCalls)
 	})
 
-	useInMemoryOrigin(t, handlerTransport(origin))
 	c := newMockCache()
-	handler := NewWithVaryHeaders(testOriginURL, c, time.Minute, nil)
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	requestA := httptest.NewRequest(http.MethodGet, "http://client-a.example/shared", nil)
 	requestA.Host = "client-a.example"
 	requestB := httptest.NewRequest(http.MethodGet, "http://client-b.example/shared", nil)
@@ -95,6 +98,7 @@ func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
 }
 
 func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
+	t.Parallel()
 	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Cache-Control", "public, max-age=60")
@@ -104,9 +108,8 @@ func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	useInMemoryOrigin(t, handlerTransport(origin))
 	c := newMockCache()
-	handler := NewWithVaryHeaders(testOriginURL, c, time.Minute, nil)
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	getRequest := httptest.NewRequest(http.MethodGet, "http://client.example/resource", nil)
 	getRequest.Host = "client.example"
 	handler.ServeHTTP(httptest.NewRecorder(), getRequest)
@@ -125,5 +128,77 @@ func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
 	}
 	if _, found := c.Get(key); found {
 		t.Fatal("successful POST did not invalidate the inbound Host cache entry")
+	}
+}
+
+func TestDefaultTransportPreservesHostScopedCache(t *testing.T) {
+	t.Parallel()
+	constructors := []struct {
+		name string
+		new  func(*url.URL) http.Handler
+	}{
+		{"New", func(origin *url.URL) http.Handler {
+			return New(origin, newMockCache(), time.Minute)
+		}},
+		{"NewWithVaryHeaders", func(origin *url.URL) http.Handler {
+			return NewWithVaryHeaders(origin, newMockCache(), time.Minute, DefaultVaryHeaders())
+		}},
+		{"NewOriginReverseProxy", func(origin *url.URL) http.Handler {
+			return NewHandler(NewOriginReverseProxy(origin, nil), newMockCache(), time.Minute, DefaultVaryHeaders())
+		}},
+	}
+	for _, constructor := range constructors {
+		t.Run(constructor.name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				w.Header().Set("Cache-Control", "public, max-age=60")
+				_, _ = fmt.Fprintf(w, "%s response-%d", r.Host, calls.Add(1))
+			}))
+			defer origin.Close()
+			originURL, err := url.Parse(origin.URL)
+			if err != nil {
+				t.Fatalf("parse origin URL: %v", err)
+			}
+			handler := constructor.new(originURL)
+			steps := []struct {
+				method      string
+				host        string
+				credentials string
+				cookie      string
+				status      int
+				body        string
+			}{
+				{http.MethodGet, "client-a.example", "Bearer alpha", "first", 200, "response-1"},
+				{http.MethodGet, "client-a.example", "Bearer alpha", "first", 200, "response-1"},
+				{http.MethodGet, "client-b.example", "Bearer alpha", "first", 200, "response-2"},
+				{http.MethodGet, "client-a.example", "Bearer beta", "first", 200, "response-3"},
+				{http.MethodGet, "client-a.example", "Bearer beta", "second", 200, "response-4"},
+				{http.MethodPost, "client-a.example", "", "", 204, ""},
+				{http.MethodGet, "client-b.example", "Bearer alpha", "first", 200, "response-2"},
+				{http.MethodGet, "client-a.example", "Bearer alpha", "first", 200, "response-5"},
+			}
+			for i, step := range steps {
+				request := httptest.NewRequest(step.method, "http://"+step.host+"/shared", nil)
+				request.Header.Set("Authorization", step.credentials)
+				request.Header.Set("Cookie", step.cookie)
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				wantBody := step.body
+				if wantBody != "" {
+					wantBody = originURL.Host + " " + wantBody
+				}
+				if response.Code != step.status || response.Body.String() != wantBody {
+					t.Fatalf("step %d response = %d %q, want %d %q", i, response.Code, response.Body.String(), step.status, wantBody)
+				}
+				if request.Host != step.host {
+					t.Fatalf("step %d inbound Host = %q, want %q", i, request.Host, step.host)
+				}
+			}
+		})
 	}
 }
