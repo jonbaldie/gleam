@@ -4,6 +4,18 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.1.10] — 2026-10-28
+
+### Added
+- Export `proxy.NewOriginReverseProxy` to allow a custom upstream transport (#138).
+
+### Fixed
+- Treat bare `max-age` and `s-maxage` directives as stale (#128, #131).
+- Ignore `If-Modified-Since` when `Last-Modified` has multiple members (#129, #133).
+
+### Changed
+- Extract HTTP cache rules into the `cachepolicy` package (#95, #127).
+
 ## [v0.1.9] — 2026-10-01
 
 ### Added
@@ -110,3 +122,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.5]: https://github.com/jonbaldie/gleam/compare/v0.1.4...v0.1.5
 [v0.1.6]: https://github.com/jonbaldie/gleam/compare/v0.1.5...v0.1.6
 [v0.1.7]: https://github.com/jonbaldie/gleam/compare/v0.1.6...v0.1.7
+[v0.1.8]: https://github.com/jonbaldie/gleam/compare/v0.1.7...v0.1.8
+[v0.1.9]: https://github.com/jonbaldie/gleam/compare/v0.1.8...v0.1.9
+[v0.1.10]: https://github.com/jonbaldie/gleam/compare/v0.1.9...v0.1.10
