@@ -1,0 +1,21 @@
+resources: origin port 42451
+resources: proxy port 38715
+resources: Gleam pid 2441032
+J1: cache hit and query isolation
+GET /item?color=red {} => 200 age=None body='/item?color=red value=initial origin-count=1'
+GET /item?color=red {} => 200 age=0 body='/item?color=red value=initial origin-count=1'
+GET /item?color=blue {} => 200 age=None body='/item?color=blue value=initial origin-count=1'
+J2: update invalidation and persisted origin state
+GET /item {} => 200 age=None body='/item value=initial origin-count=1'
+PUT /item {} => 204 age=None body=''
+GET /item {} => 200 age=None body='/item value=updated origin-count=2'
+GET /item {} => 200 age=0 body='/item value=updated origin-count=2'
+J3: validators and request no-cache
+GET /validator {} => 200 age=None body='/validator value=updated origin-count=1'
+GET /validator {'If-None-Match': '"version-1"'} => 304 age=0 body=''
+GET /validator {'Cache-Control': 'no-cache'} => 200 age=None body='/validator value=updated origin-count=2'
+PASS: all assertions; origin counts: [('/item', 2), ('/item?color=blue', 1), ('/item?color=red', 1), ('/validator', 2)]
+cleanup: Gleam pid 2441032 exited -15
+cleanup: origin server closed and thread joined
+cleanup: origin port 42451 connect errno=111
+cleanup: proxy port 38715 connect errno=111

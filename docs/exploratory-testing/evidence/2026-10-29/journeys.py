@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import errno
 import http.client
 import http.server
 import os
@@ -34,12 +35,17 @@ server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Origin)
 thread = threading.Thread(target=server.serve_forever)
 thread.start()
 proc = None
+port = None
+origin_port = server.server_port
 try:
+    print(f'resources: origin port {origin_port}', flush=True)
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
         port = s.getsockname()[1]
-    env = dict(os.environ, ORIGIN_URL=f'http://127.0.0.1:{server.server_port}', PORT=str(port), CACHE_TYPE='memory')
+    print(f'resources: proxy port {port}', flush=True)
+    env = dict(os.environ, ORIGIN_URL=f'http://127.0.0.1:{origin_port}', PORT=str(port), CACHE_TYPE='memory')
     proc = subprocess.Popen(['.scratch/gleam'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f'resources: Gleam pid {proc.pid}', flush=True)
     for _ in range(100):
         try:
             with socket.create_connection(('127.0.0.1', port), timeout=.1):
@@ -90,3 +96,11 @@ finally:
     server.server_close()
     thread.join()
     print('cleanup: origin server closed and thread joined')
+    for name, checked_port in [('origin', origin_port), ('proxy', port)]:
+        if checked_port is not None:
+            with socket.socket() as check:
+                check.settimeout(1)
+                result = check.connect_ex(('127.0.0.1', checked_port))
+            print(f'cleanup: {name} port {checked_port} connect errno={result}')
+            if result != errno.ECONNREFUSED:
+                raise RuntimeError(f'{name} port {checked_port} teardown not verified: errno {result}')

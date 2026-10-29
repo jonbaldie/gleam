@@ -1,0 +1,3 @@
+ss -ltnp for ports 42451 and 38715
+State Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+ps for Gleam PIDs 2353545 2365137 2433964 2441032
