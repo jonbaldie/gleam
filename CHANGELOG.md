@@ -4,6 +4,11 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.1.11] — 2026-10-31
+
+### Fixed
+- Sweep expired memory cache entries even when the cache is idle (#114, #143).
+
 ## [v0.1.10] — 2026-10-28
 
 ### Added
@@ -125,3 +130,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.8]: https://github.com/jonbaldie/gleam/compare/v0.1.7...v0.1.8
 [v0.1.9]: https://github.com/jonbaldie/gleam/compare/v0.1.8...v0.1.9
 [v0.1.10]: https://github.com/jonbaldie/gleam/compare/v0.1.9...v0.1.10
+[v0.1.11]: https://github.com/jonbaldie/gleam/compare/v0.1.10...v0.1.11
