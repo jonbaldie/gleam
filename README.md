@@ -60,6 +60,12 @@ Here's a sample usage, proxying requests to my personal site on port 80:
 docker run --rm -p 80:80 -e ORIGIN_URL=https://www.jonbaldie.com -e PORT=80 jonbaldie/gleam
 ```
 
+## Memory cache
+
+The memory cache scans for expired entries once per minute. A scan removes expired entries. Scheduling and lock contention can delay a scan. A request also removes an expired entry when it accesses the entry.
+
+Call `Close` when a `SimpleCache` is no longer needed. It stops the scan worker. Cache operations remain available, but scans stop. The server calls `Close` when its listen call returns.
+
 ## Redis
 
 This is one of my favourite features of Gleam. By setting `CACHE_TYPE=redis` and `REDIS_URL=redis://{username}:{password}@{hostname}:{port}/{database}` Gleam will cache your HTTP requests in Redis. 
