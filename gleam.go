@@ -22,8 +22,11 @@ var ctx = context.Background()
 
 // SimpleCache holds the cache data
 type SimpleCache struct {
-	mu    sync.Mutex
-	store map[string]*simpleEntry
+	mu       sync.Mutex
+	store    map[string]*simpleEntry
+	stop     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // simpleEntry pairs a stored item with the moment its ttl elapses.
@@ -58,7 +61,7 @@ func (c *SimpleCache) Get(key string) (*cache.CacheItem, bool) {
 	if !found {
 		return nil, false
 	}
-	if entry.expiresAt.Before(time.Now()) {
+	if !time.Now().Before(entry.expiresAt) {
 		delete(c.store, key)
 		return nil, false
 	}
@@ -80,9 +83,41 @@ func (c *SimpleCache) InvalidatePrefix(prefix string) {
 
 // NewSimpleCache initializes and returns a new SimpleCache
 func NewSimpleCache() *SimpleCache {
-	return &SimpleCache{
+	c := &SimpleCache{
 		store: make(map[string]*simpleEntry),
+		stop:  make(chan struct{}),
+		done:  make(chan struct{}),
 	}
+	ticker := time.NewTicker(time.Minute)
+	go c.evictExpired(ticker)
+	return c
+}
+
+func (c *SimpleCache) evictExpired(ticker *time.Ticker) {
+	defer close(c.done)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.Lock()
+			now := time.Now()
+			for key, entry := range c.store {
+				if !now.Before(entry.expiresAt) {
+					delete(c.store, key)
+				}
+			}
+			c.mu.Unlock()
+		case <-c.stop:
+			return
+		}
+	}
+}
+
+// Close stops the expiry worker and waits for it to finish. Cache operations
+// remain available after Close, but expired entries are no longer swept.
+func (c *SimpleCache) Close() {
+	c.stopOnce.Do(func() { close(c.stop) })
+	<-c.done
 }
 
 // RedisCache implements the Cache interface using Redis
@@ -269,6 +304,12 @@ func requestLoggingHandler(handler http.Handler) http.Handler {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	config := loadConfig()
 
 	log.Printf("Gleam started with Origin: %s, TTL: %v, Port: %s", config.OriginURL, config.TTL, config.Port)
@@ -278,11 +319,13 @@ func main() {
 	if config.CacheType == "redis" {
 		c = NewRedisCache(config.RedisURL, &codec.BinaryCodec{})
 	} else {
-		c = NewSimpleCache()
+		memoryCache := NewSimpleCache()
+		defer memoryCache.Close()
+		c = memoryCache
 	}
 	handler := proxy.NewWithVaryHeaders(config.Origin, c, config.TTL, config.VaryHeaders)
 
 	http.Handle("/", requestLoggingHandler(handler))
 
-	log.Fatal(http.ListenAndServe(":"+config.Port, nil))
+	return http.ListenAndServe(":"+config.Port, nil)
 }

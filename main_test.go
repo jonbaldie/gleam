@@ -18,6 +18,7 @@ import (
 
 func TestSimpleCache(t *testing.T) {
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 
 	c.Set("key1", cache.CacheItem{Content: []byte("value1"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 	item, found := c.Get("key1")
@@ -254,6 +255,7 @@ func TestParseOriginURLRejectsMissingScheme(t *testing.T) {
 
 func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 	header := http.Header{
 		"Content-Type": {"application/json"},
 		"X-Request-Id": {"abc-123"},
@@ -339,6 +341,7 @@ func TestParseOriginURLWrapsUnderlyingParseError(t *testing.T) {
 
 func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 	var wg sync.WaitGroup
 	const N = 200
 	wg.Add(N)
@@ -392,6 +395,7 @@ func TestNewRedisCache_DefaultURL(t *testing.T) {
 
 func TestSimpleCacheExpiredEntriesAreEvicted(t *testing.T) {
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 
 	const n = 1000
 	for i := 0; i < n; i++ {
@@ -415,6 +419,7 @@ func TestSimpleCacheExpiredEntriesAreEvicted(t *testing.T) {
 
 func TestSimpleCacheLiveEntriesSurviveExpiredGet(t *testing.T) {
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 
 	c.Set("live", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 	c.Set("dead", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Nanosecond)
@@ -434,6 +439,7 @@ func TestSimpleCacheLiveEntriesSurviveExpiredGet(t *testing.T) {
 
 func TestSimpleCacheInvalidatePrefix(t *testing.T) {
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 
 	items := []string{
 		"example.com#/resource",
@@ -462,6 +468,7 @@ func TestSimpleCacheInvalidatePrefix(t *testing.T) {
 
 func TestSimpleCacheInvalidatePrefixWithNoMatchingKeys(t *testing.T) {
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 	c.Set("example.com#/resource", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 
 	c.InvalidatePrefix("other.com#/resource")
@@ -476,6 +483,7 @@ func TestSimpleCacheInvalidatePrefixWithNoMatchingKeys(t *testing.T) {
 func TestSimpleCachePreservesStoredAt(t *testing.T) {
 	storedAt := time.Now().Add(-time.Minute)
 	c := NewSimpleCache()
+	t.Cleanup(c.Close)
 	c.Set("key", cache.CacheItem{Content: []byte("body"), Status: 200, StoredAt: storedAt}, time.Minute)
 
 	item, found := c.Get("key")
