@@ -408,3 +408,12 @@ func TestAuthenticatedStorageStillAppliesStorageRules(t *testing.T) {
 		t.Fatal("CanStoreResponse() = true for no-store, want false")
 	}
 }
+
+func TestStatusPermitsStorage(t *testing.T) {
+	header := http.Header{"Cache-Control": {"public, max-age=60"}}
+	for status := 100; status <= 599; status++ {
+		if got, want := cachepolicy.StatusPermitsStorage(status), cachepolicy.CanStoreResponse(status, header, nil, true); got != want {
+			t.Errorf("status %d: StatusPermitsStorage = %t, CanStoreResponse = %t", status, got, want)
+		}
+	}
+}

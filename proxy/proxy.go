@@ -89,7 +89,7 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 		return
 	}
 
-	crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK}
+	crw := &cacheResponseWriter{ResponseWriter: w, buf: new(bytes.Buffer), status: http.StatusOK, varyHeaders: varyHeaders, authenticated: authenticated}
 	upstream.ServeHTTP(crw, r)
 	// Reaching here means the upstream returned normally; an abnormal unwind
 	// (such as the reverse proxy's http.ErrAbortHandler on a copy error)
@@ -99,7 +99,7 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 		crw.cachedHeader = cloneHeader(crw.ResponseWriter.Header())
 	}
 
-	storeResponse(c, cacheKey, crw, varyHeaders, ttl, authenticated)
+	storeResponse(c, cacheKey, crw, ttl)
 }
 
 // reusableCachedItem returns the stored entry for a key when this cache may
@@ -117,8 +117,8 @@ func reusableCachedItem(c cache.Cache, cacheKey string, authenticated bool) (*ca
 
 // storeResponse caches the origin's response when it is a complete, storable
 // representation this shared cache is allowed to reuse.
-func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, varyHeaders []string, ttl time.Duration, authenticated bool) {
-	if !crw.copyComplete() || !cachepolicy.CanStoreResponse(crw.status, crw.cachedHeader, varyHeaders, authenticated) {
+func storeResponse(c cache.Cache, cacheKey string, crw *cacheResponseWriter, ttl time.Duration) {
+	if !crw.copyComplete() || !crw.storable() {
 		return
 	}
 
@@ -202,9 +202,13 @@ func (w *statusResponseWriter) Flush() {
 
 type cacheResponseWriter struct {
 	http.ResponseWriter
-	buf          *bytes.Buffer
-	status       int
-	cachedHeader http.Header
+	buf           *bytes.Buffer
+	status        int
+	cachedHeader  http.Header
+	varyHeaders   []string
+	authenticated bool
+	capturing     bool
+	bodyDiscarded bool
 	// upstreamReturned records that the upstream finished serving without
 	// unwinding, and writeErr the failure of any forwarded body write. A
 	// response is only a complete representation when both agree the copy ran
@@ -215,12 +219,21 @@ type cacheResponseWriter struct {
 }
 
 func (w *cacheResponseWriter) copyComplete() bool {
-	return w.upstreamReturned && w.writeErr == nil
+	return w.upstreamReturned && w.writeErr == nil && !w.bodyDiscarded
+}
+
+func (w *cacheResponseWriter) storable() bool {
+	return cachepolicy.CanStoreResponse(w.status, w.cachedHeader, w.varyHeaders, w.authenticated)
 }
 
 func (w *cacheResponseWriter) WriteHeader(status int) {
 	w.status = status
 	w.cachedHeader = cloneHeader(w.ResponseWriter.Header())
+	if w.cachedHeader == nil {
+		w.capturing = cachepolicy.StatusPermitsStorage(status)
+	} else {
+		w.capturing = w.storable()
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 
@@ -228,7 +241,14 @@ func (w *cacheResponseWriter) Write(b []byte) (int, error) {
 	if w.cachedHeader == nil {
 		w.WriteHeader(w.status)
 	}
-	w.buf.Write(b)
+	if len(b) > 0 && !w.bodyDiscarded {
+		if w.capturing {
+			w.buf.Write(b)
+		} else {
+			w.bodyDiscarded = true
+			*w.buf = bytes.Buffer{}
+		}
+	}
 	n, err := w.ResponseWriter.Write(b)
 	if err != nil && w.writeErr == nil {
 		w.writeErr = err
