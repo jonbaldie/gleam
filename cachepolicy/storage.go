@@ -14,6 +14,12 @@ func CanStoreResponse(status int, header http.Header, varyHeaders []string, auth
 	return responseIsCacheable(status, header, varyHeaders) && CanReuse(header, authenticated)
 }
 
+// StatusPermitsStorage reports whether some response header could make a
+// response with this status storable.
+func StatusPermitsStorage(status int) bool {
+	return status >= http.StatusOK && status < http.StatusMultipleChoices && status != http.StatusPartialContent
+}
+
 // CanReuse reports whether a stored response with the given header may answer
 // a request. An authenticated request may only reuse a response carrying one
 // of the directives RFC 9111 section 3.5 accepts as explicit permission for a
@@ -51,10 +57,7 @@ func responseIsCacheable(status int, header http.Header, varyHeaders []string) b
 }
 
 func responseStatusAllowsStorage(status int, header http.Header) bool {
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return false
-	}
-	if status == http.StatusPartialContent {
+	if !StatusPermitsStorage(status) {
 		return false
 	}
 	// RFC 9111 section 3 permits storing a response only when it has an
