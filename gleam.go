@@ -49,13 +49,8 @@ func loadConfigFromEnv() (*Config, error) {
 
 	redisUrl := getenv("REDIS_URL", "redis://localhost:6379/0")
 	cacheType := getenv("CACHE_TYPE", "memory")
-	if cacheType != "redis" && cacheType != "memory" {
-		return nil, fmt.Errorf("invalid CACHE_TYPE, must be 'memory' (default) or 'redis'")
-	}
-	if cacheType == "redis" {
-		if _, err := redis.ParseURL(redisUrl); err != nil {
-			return nil, fmt.Errorf("invalid REDIS_URL: %w", err)
-		}
+	if err := validateCacheConfig(cacheType, redisUrl); err != nil {
+		return nil, err
 	}
 	varyHeaders := proxy.DefaultVaryHeaders()
 	if raw, ok := os.LookupEnv("CACHE_VARY_HEADERS"); ok {
@@ -77,6 +72,18 @@ func loadConfigFromEnv() (*Config, error) {
 		CacheType:   cacheType,
 		VaryHeaders: varyHeaders,
 	}, nil
+}
+
+func validateCacheConfig(cacheType, redisURL string) error {
+	if cacheType != "redis" && cacheType != "memory" {
+		return fmt.Errorf("invalid CACHE_TYPE, must be 'memory' (default) or 'redis'")
+	}
+	if cacheType == "redis" {
+		if _, err := redis.ParseURL(redisURL); err != nil {
+			return fmt.Errorf("invalid REDIS_URL: %w", err)
+		}
+	}
+	return nil
 }
 
 func parseOriginURL(raw string) (*url.URL, error) {
