@@ -23,7 +23,7 @@ func TestBugHuntIfModifiedSinceOnCacheHitIsIgnored(t *testing.T) {
 		_, _ = w.Write([]byte("body"))
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestBugHuntMultiValueIfModifiedSinceIsIgnored(t *testing.T) {
 		_, _ = w.Write([]byte("body"))
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -100,7 +100,7 @@ func TestBugHuntMultipleLastModifiedIgnoresIfModifiedSince(t *testing.T) {
 		_, _ = w.Write([]byte("body"))
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -212,7 +212,7 @@ func TestProxyConditionalGETWithIfModifiedSince(t *testing.T) {
 				_, _ = w.Write([]byte("body"))
 			})
 
-			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -275,7 +275,7 @@ func TestBugHuntIfModifiedSinceIgnoredForNon200CachedResponse(t *testing.T) {
 				}
 			})
 
-			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)

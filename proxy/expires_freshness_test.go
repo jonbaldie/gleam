@@ -25,7 +25,7 @@ func TestMultipleExpiresHeadersMustNotBeCached(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "origin-%d", call)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -54,7 +54,7 @@ func TestBugHuntExpiresZeroServedFromCache(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", n)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)

@@ -30,7 +30,7 @@ func TestProxySuccessfulPOSTInvalidatesCachedGET(t *testing.T) {
 		}
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -77,7 +77,7 @@ func TestProxyAbsoluteFormPOSTInvalidatesCachedGET(t *testing.T) {
 		}
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -122,7 +122,7 @@ func TestProxySuccessfulPOSTInvalidatesAllVaryVariants(t *testing.T) {
 		_, _ = w.Write([]byte("state-" + r.Header.Get("Authorization")))
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for _, authorization := range []string{"Bearer alpha", "Bearer beta"} {
@@ -172,7 +172,7 @@ func TestProxyFailedPOSTKeepsCachedGET(t *testing.T) {
 				}
 			})
 
-			c := newMockCache()
+			c := newTestCache(t)
 			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 			get := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -215,7 +215,7 @@ func TestProxyRedirectPOSTInvalidatesCachedGET(t *testing.T) {
 		_, _ = w.Write([]byte("new"))
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	first := httptest.NewRecorder()
@@ -253,7 +253,7 @@ func TestProxySuccessfulUnsafeMethodsInvalidateCachedGET(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			})
 
-			c := newMockCache()
+			c := newTestCache(t)
 			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 			get := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -291,7 +291,7 @@ func TestProxySafeMethodsDoNotInvalidateCachedGET(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	get := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -329,7 +329,7 @@ func TestProxyPOSTStreamsResponseWithoutBuffering(t *testing.T) {
 		_, _ = w.Write([]byte("second"))
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	client := newFlushRecorder()
 	handler.ServeHTTP(client, httptest.NewRequest(http.MethodPost, "/resource", strings.NewReader("payload")))
 

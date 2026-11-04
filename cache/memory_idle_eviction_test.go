@@ -1,4 +1,4 @@
-package main
+package cache
 
 import (
 	"fmt"
@@ -6,18 +6,16 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"jonbaldie/gleam/cache"
 )
 
 func TestSimpleCacheEvictsExpiredEntriesWhileIdle(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := NewSimpleCache()
+		c := NewMemoryCache()
 		defer c.Close()
 		for i := 0; i < 10; i++ {
-			c.Set(fmt.Sprintf("expired-%d", i), cache.CacheItem{Content: []byte("expired")}, time.Second)
+			c.Set(fmt.Sprintf("expired-%d", i), CacheItem{Content: []byte("expired")}, time.Second)
 		}
-		c.Set("live", cache.CacheItem{Content: []byte("live")}, 10*time.Minute)
+		c.Set("live", CacheItem{Content: []byte("live")}, 10*time.Minute)
 
 		time.Sleep(2 * time.Minute)
 		synctest.Wait()
@@ -44,13 +42,13 @@ func TestSimpleCacheEvictsExpiredEntriesWhileIdle(t *testing.T) {
 
 func TestSimpleCacheSweepOverwriteAndInvalidation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := NewSimpleCache()
+		c := NewMemoryCache()
 		defer c.Close()
-		c.Set("overwrite", cache.CacheItem{Content: []byte("old")}, time.Minute)
-		c.Set("host/path", cache.CacheItem{}, time.Minute)
-		c.Set("host/path#h=variant", cache.CacheItem{}, time.Minute)
+		c.Set("overwrite", CacheItem{Content: []byte("old")}, time.Minute)
+		c.Set("host/path", CacheItem{}, time.Minute)
+		c.Set("host/path#h=variant", CacheItem{}, time.Minute)
 		time.Sleep(30 * time.Second)
-		c.Set("overwrite", cache.CacheItem{Content: []byte("new")}, 2*time.Minute)
+		c.Set("overwrite", CacheItem{Content: []byte("new")}, 2*time.Minute)
 		c.InvalidatePrefix("host/path")
 		time.Sleep(30 * time.Second)
 		synctest.Wait()
@@ -66,10 +64,10 @@ func TestSimpleCacheSweepOverwriteAndInvalidation(t *testing.T) {
 
 func TestSimpleCacheExactDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := NewSimpleCache()
+		c := NewMemoryCache()
 		defer c.Close()
-		c.Set("get", cache.CacheItem{}, 30*time.Second)
-		c.Set("sweep", cache.CacheItem{}, time.Minute)
+		c.Set("get", CacheItem{}, 30*time.Second)
+		c.Set("sweep", CacheItem{}, time.Minute)
 		time.Sleep(30 * time.Second)
 		if _, found := c.Get("get"); found {
 			t.Fatal("Get returned an entry at its expiry deadline")
@@ -87,7 +85,7 @@ func TestSimpleCacheExactDeadline(t *testing.T) {
 
 func TestSimpleCacheCloseConcurrentAndOperationsAfterClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := NewSimpleCache()
+		c := NewMemoryCache()
 		var wg sync.WaitGroup
 		for i := 0; i < 20; i++ {
 			wg.Add(1)
@@ -98,8 +96,8 @@ func TestSimpleCacheCloseConcurrentAndOperationsAfterClose(t *testing.T) {
 		}
 		wg.Wait()
 		c.Close()
-		c.Set("expired", cache.CacheItem{}, time.Second)
-		c.Set("live", cache.CacheItem{Content: []byte("live")}, 10*time.Minute)
+		c.Set("expired", CacheItem{}, time.Second)
+		c.Set("live", CacheItem{Content: []byte("live")}, 10*time.Minute)
 		time.Sleep(2 * time.Minute)
 		synctest.Wait()
 		c.mu.Lock()
@@ -123,7 +121,7 @@ func TestSimpleCacheCloseConcurrentAndOperationsAfterClose(t *testing.T) {
 
 func TestSimpleCacheConcurrentSweepAndOperations(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := NewSimpleCache()
+		c := NewMemoryCache()
 		defer c.Close()
 		var wg sync.WaitGroup
 		for i := 0; i < 10; i++ {
@@ -132,7 +130,7 @@ func TestSimpleCacheConcurrentSweepAndOperations(t *testing.T) {
 				defer wg.Done()
 				for j := 0; j < 100; j++ {
 					key := fmt.Sprintf("host/%d", i)
-					c.Set(key, cache.CacheItem{}, time.Second)
+					c.Set(key, CacheItem{}, time.Second)
 					c.Get(key)
 					c.InvalidatePrefix(key)
 					time.Sleep(time.Second)

@@ -21,7 +21,7 @@ func TestBugHuntAuthorizedResponseReusedWithoutPermission(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", n)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for i := 1; i <= 2; i++ {
@@ -51,7 +51,7 @@ func TestProxyReusesAuthorizedResponseWithSharedCachePermission(t *testing.T) {
 				_, _ = fmt.Fprintf(w, "response-%d", n)
 			})
 
-			c := newMockCache()
+			c := newTestCache(t)
 			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 			for i := 1; i <= 2; i++ {
@@ -80,7 +80,7 @@ func TestProxyReusesUnauthenticatedResponseWithoutPermission(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", n)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for i := 1; i <= 2; i++ {
@@ -107,7 +107,7 @@ func TestProxyDoesNotServeStoredEntryToAuthorizedRequestWithoutPermission(t *tes
 		_, _ = fmt.Fprintf(w, "response-%d", n)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandlerWithVaryHeaders(t, origin, c, time.Minute, []string{"Cookie"})
 
 	plain := httptest.NewRecorder()

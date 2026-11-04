@@ -16,7 +16,7 @@ func TestNewHandlerCachesInProcessUpstreamGET(t *testing.T) {
 		w.Header().Set("Cache-Control", "max-age=60")
 		_, _ = fmt.Fprintf(w, "response-%d", upstreamCalls)
 	})
-	handler := NewHandler(upstream, newMockCache(), time.Minute, DefaultVaryHeaders())
+	handler := NewHandler(upstream, newTestCache(t), time.Minute, DefaultVaryHeaders())
 
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
@@ -39,7 +39,7 @@ func TestNewHandlerForwardsNonGETToInProcessUpstreamAndInvalidates(t *testing.T)
 		}
 		_, _ = fmt.Fprint(w, r.Method)
 	})
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(upstream, c, time.Minute, nil)
 	get := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), get)
@@ -76,7 +76,7 @@ func TestNewHandlerDelegatesHijackToClientWriter(t *testing.T) {
 			defer clientConn.Close()
 			defer proxyConn.Close()
 
-			handler := NewHandler(upstream, newMockCache(), time.Minute, nil)
+			handler := NewHandler(upstream, newTestCache(t), time.Minute, nil)
 			handler.ServeHTTP(&hijackRecorder{ResponseRecorder: httptest.NewRecorder(), conn: proxyConn}, httptest.NewRequest(method, "/socket", nil))
 
 			if hijacked != proxyConn {
@@ -94,7 +94,7 @@ func TestNewHandlerReportsHijackUnsupportedByClientWriter(t *testing.T) {
 				_, _, hijackErr = w.(http.Hijacker).Hijack()
 			})
 
-			handler := NewHandler(upstream, newMockCache(), time.Minute, nil)
+			handler := NewHandler(upstream, newTestCache(t), time.Minute, nil)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, "/socket", nil))
 
 			if hijackErr == nil {

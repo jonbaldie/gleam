@@ -17,7 +17,7 @@ func TestProxyOnlyIfCachedMissReturnsGatewayTimeout(t *testing.T) {
 		http.Error(w, "origin should not receive only-if-cached miss", http.StatusInternalServerError)
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	req := httptest.NewRequest(http.MethodGet, "/nothing-cached", nil)
 	req.Header.Set("Cache-Control", "only-if-cached")
 	rec := httptest.NewRecorder()
@@ -40,7 +40,7 @@ func TestProxyOnlyIfCachedHitUsesCachedResponse(t *testing.T) {
 		_, _ = w.Write([]byte("cached response"))
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/cached", nil))
 	if first.Code != http.StatusOK || first.Body.String() != "cached response" {
@@ -70,7 +70,7 @@ func TestProxyOnlyIfCachedExpiredEntryReturnsGatewayTimeout(t *testing.T) {
 		http.Error(w, "origin should not receive expired only-if-cached entry", http.StatusInternalServerError)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 	req := httptest.NewRequest(http.MethodGet, "/expired", nil)
 	req.Header.Set("Cache-Control", "only-if-cached")
@@ -98,7 +98,7 @@ func TestProxyOnlyIfCachedUnauthorizedEntryReturnsGatewayTimeout(t *testing.T) {
 		_, _ = w.Write([]byte("shared response"))
 	})
 
-	handler := mustCachingProxyHandlerWithVaryHeaders(t, origin, newMockCache(), time.Minute, []string{"Cookie"})
+	handler := mustCachingProxyHandlerWithVaryHeaders(t, origin, newTestCache(t), time.Minute, []string{"Cookie"})
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/authorized", nil))
 
@@ -123,7 +123,7 @@ func TestProxyOnlyIfCachedRangeRequestReturnsGatewayTimeout(t *testing.T) {
 		_, _ = w.Write([]byte("full response"))
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/range", nil))
 
