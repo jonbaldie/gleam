@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"jonbaldie/gleam/cache"
-	"jonbaldie/gleam/codec"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +16,7 @@ import (
 )
 
 func TestSimpleCache(t *testing.T) {
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 
 	c.Set("key1", cache.CacheItem{Content: []byte("value1"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
@@ -254,7 +253,7 @@ func TestParseOriginURLRejectsMissingScheme(t *testing.T) {
 }
 
 func TestSimpleCacheStoresAndReturnsHeaders(t *testing.T) {
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 	header := http.Header{
 		"Content-Type": {"application/json"},
@@ -340,7 +339,7 @@ func TestParseOriginURLWrapsUnderlyingParseError(t *testing.T) {
 }
 
 func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 	var wg sync.WaitGroup
 	const N = 200
@@ -355,46 +354,8 @@ func TestSimpleCacheConcurrentSetsDoNotRace(t *testing.T) {
 	wg.Wait()
 }
 
-func TestNewRedisCache_ValidURL(t *testing.T) {
-	redisURL := "redis://myuser:mypassword@myhost:1234/5"
-	c := NewRedisCache(redisURL, &codec.BinaryCodec{})
-
-	opts := c.client.Options()
-	if opts.Addr != "myhost:1234" {
-		t.Errorf("expected Addr %q, got %q", "myhost:1234", opts.Addr)
-	}
-	if opts.Username != "myuser" {
-		t.Errorf("expected Username %q, got %q", "myuser", opts.Username)
-	}
-	if opts.Password != "mypassword" {
-		t.Errorf("expected Password %q, got %q", "mypassword", opts.Password)
-	}
-	if opts.DB != 5 {
-		t.Errorf("expected DB %d, got %d", 5, opts.DB)
-	}
-}
-
-func TestNewRedisCache_DefaultURL(t *testing.T) {
-	redisURL := "redis://localhost:6379/0"
-	c := NewRedisCache(redisURL, &codec.BinaryCodec{})
-
-	opts := c.client.Options()
-	if opts.Addr != "localhost:6379" {
-		t.Errorf("expected Addr %q, got %q", "localhost:6379", opts.Addr)
-	}
-	if opts.Username != "" {
-		t.Errorf("expected empty Username, got %q", opts.Username)
-	}
-	if opts.Password != "" {
-		t.Errorf("expected empty Password, got %q", opts.Password)
-	}
-	if opts.DB != 0 {
-		t.Errorf("expected DB %d, got %d", 0, opts.DB)
-	}
-}
-
 func TestSimpleCacheExpiredEntriesAreEvicted(t *testing.T) {
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 
 	const n = 1000
@@ -408,17 +369,10 @@ func TestSimpleCacheExpiredEntriesAreEvicted(t *testing.T) {
 			t.Fatalf("expected expired key%d to miss", i)
 		}
 	}
-
-	c.mu.Lock()
-	remaining := len(c.store)
-	c.mu.Unlock()
-	if remaining != 0 {
-		t.Errorf("expected expired entries to be evicted, %d remain in store", remaining)
-	}
 }
 
 func TestSimpleCacheLiveEntriesSurviveExpiredGet(t *testing.T) {
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 
 	c.Set("live", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
@@ -438,7 +392,7 @@ func TestSimpleCacheLiveEntriesSurviveExpiredGet(t *testing.T) {
 }
 
 func TestSimpleCacheInvalidatePrefix(t *testing.T) {
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 
 	items := []string{
@@ -467,7 +421,7 @@ func TestSimpleCacheInvalidatePrefix(t *testing.T) {
 }
 
 func TestSimpleCacheInvalidatePrefixWithNoMatchingKeys(t *testing.T) {
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 	c.Set("example.com#/resource", cache.CacheItem{Content: []byte("value"), Header: http.Header{}, Status: http.StatusOK}, time.Minute)
 
@@ -482,7 +436,7 @@ func TestSimpleCacheInvalidatePrefixWithNoMatchingKeys(t *testing.T) {
 // hits can report an accurate Age.
 func TestSimpleCachePreservesStoredAt(t *testing.T) {
 	storedAt := time.Now().Add(-time.Minute)
-	c := NewSimpleCache()
+	c := cache.NewMemoryCache()
 	t.Cleanup(c.Close)
 	c.Set("key", cache.CacheItem{Content: []byte("body"), Status: 200, StoredAt: storedAt}, time.Minute)
 

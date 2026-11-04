@@ -50,7 +50,7 @@ func TestEmptyBodyForbiddenDirectivesNotCached(t *testing.T) {
 				// returns without calling WriteHeader or Write
 			})
 
-			c := newMockCache()
+			c := newTestCache(t)
 			handler := NewHandler(upstream, c, time.Minute, []string{"Accept-Encoding"})
 
 			first := httptest.NewRecorder()
@@ -79,7 +79,7 @@ func TestEmptyBodyHeadersPreservedOnCacheHit(t *testing.T) {
 		// returns without calling WriteHeader or Write
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(upstream, c, time.Minute, nil)
 
 	first := httptest.NewRecorder()
@@ -117,7 +117,7 @@ func TestEmptyBodyNoHeadersIsCached(t *testing.T) {
 		originCalls.Add(1)
 		// returns with no headers, no WriteHeader, no Write
 	})
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(upstream, c, time.Minute, nil)
 
 	first := httptest.NewRecorder()
@@ -143,7 +143,7 @@ func TestHeadersModifiedAfterWriteHeaderNotStored(t *testing.T) {
 		w.Header().Set("X-After", "not-stored")
 		_, _ = w.Write([]byte("body"))
 	})
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(upstream, c, time.Minute, nil)
 
 	first := httptest.NewRecorder()
@@ -168,7 +168,7 @@ func TestEmptyBodyTrailersPreserved(t *testing.T) {
 		w.Header().Set(http.TrailerPrefix+"X-Checksum", "abc123")
 		// returns without WriteHeader or Write
 	})
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(upstream, c, time.Minute, nil)
 
 	first := httptest.NewRecorder()

@@ -29,7 +29,7 @@ func TestInvalidCacheControlAgeMustNotBeCached(t *testing.T) {
 				_, _ = fmt.Fprintf(w, "origin-%d", call)
 			})
 
-			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 
 			for i := 1; i <= 2; i++ {
 				rec := httptest.NewRecorder()

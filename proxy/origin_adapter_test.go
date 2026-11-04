@@ -47,7 +47,7 @@ func TestNewSeparatesCachedGetsByDefaultVaryHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse origin URL: %v", err)
 	}
-	handler := New(originURL, newMockCache(), time.Minute)
+	handler := New(originURL, newTestCache(t), time.Minute)
 
 	for _, credentials := range []string{"Bearer alpha", "Bearer beta"} {
 		req := httptest.NewRequest(http.MethodGet, "/profile", nil)
@@ -87,7 +87,7 @@ func TestProxyAdapterStreamsFirstChunkBeforeOriginFinishes(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
-			handler := NewHandler(NewOriginReverseProxy(testOriginURL, streamingOrigin()), newMockCache(), time.Minute, defaultVaryHeaders)
+			handler := NewHandler(NewOriginReverseProxy(testOriginURL, streamingOrigin()), newTestCache(t), time.Minute, defaultVaryHeaders)
 			client := newFlushRecorder()
 			handler.ServeHTTP(client, httptest.NewRequest(method, "/stream", strings.NewReader("payload")))
 
@@ -117,7 +117,7 @@ func TestProxyGetProtocolUpgradeReachesOrigin(t *testing.T) {
 			Request:    r,
 		}, nil
 	})
-	handler := NewHandler(NewOriginReverseProxy(testOriginURL, transport), newMockCache(), time.Minute, defaultVaryHeaders)
+	handler := NewHandler(NewOriginReverseProxy(testOriginURL, transport), newTestCache(t), time.Minute, defaultVaryHeaders)
 
 	clientConn, proxyConn := net.Pipe()
 	defer clientConn.Close()

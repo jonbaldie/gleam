@@ -1,32 +1,26 @@
-package codec
+package cache
 
 import (
 	"bytes"
 	"encoding/base64"
-	"jonbaldie/gleam/cache"
 	"net/http"
 	"testing"
 	"time"
 )
 
-func TestBinaryCodec_ImplementsCodec(t *testing.T) {
-	var _ Codec = (*BinaryCodec)(nil)
-}
-
 func TestBinaryCodec_RoundTrip(t *testing.T) {
-	codec := &BinaryCodec{}
-	item := cache.CacheItem{
+	item := CacheItem{
 		Content: []byte("test"),
 		Header:  http.Header{"X-Test": {"1"}},
 		Status:  200,
 	}
 
-	data, err := codec.Encode(item)
+	data, err := encodeCacheItem(item)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
 
-	decoded, err := codec.Decode(data)
+	decoded, err := decodeCacheItem(data)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
@@ -43,8 +37,7 @@ func TestBinaryCodec_RoundTrip(t *testing.T) {
 }
 
 func TestBinaryCodec_RoundTripWithTrailers(t *testing.T) {
-	codec := &BinaryCodec{}
-	item := cache.CacheItem{
+	item := CacheItem{
 		Content: []byte("body"),
 		Header: http.Header{
 			"Content-Type": {"text/plain"},
@@ -54,12 +47,12 @@ func TestBinaryCodec_RoundTripWithTrailers(t *testing.T) {
 		Status:  200,
 	}
 
-	data, err := codec.Encode(item)
+	data, err := encodeCacheItem(item)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
 
-	decoded, err := codec.Decode(data)
+	decoded, err := decodeCacheItem(data)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
@@ -71,9 +64,8 @@ func TestBinaryCodec_RoundTripWithTrailers(t *testing.T) {
 
 func TestBinaryCodecRoundTripsStoredAt(t *testing.T) {
 	storedAt := time.Now().UTC().Truncate(time.Second)
-	c := &BinaryCodec{}
 
-	encoded, err := c.Encode(cache.CacheItem{
+	encoded, err := encodeCacheItem(CacheItem{
 		Content:  []byte("body"),
 		Status:   200,
 		Header:   http.Header{"Date": []string{"Thu, 10 Sep 2026 03:58:45 GMT"}},
@@ -83,7 +75,7 @@ func TestBinaryCodecRoundTripsStoredAt(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 
-	decoded, err := c.Decode(encoded)
+	decoded, err := decodeCacheItem(encoded)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -118,8 +110,7 @@ func TestBinaryCodecDecodesEntriesWithLegacyExpiration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := &BinaryCodec{}
-	decoded, err := c.Decode([]byte(base64.StdEncoding.EncodeToString(buf.Bytes())))
+	decoded, err := decodeCacheItem([]byte(base64.StdEncoding.EncodeToString(buf.Bytes())))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -138,8 +129,7 @@ func TestBinaryCodecDecodesEntriesWithLegacyExpiration(t *testing.T) {
 // Trailer. New entries must keep writing that slot, as the zero time, so a
 // mixed deployment sharing one Redis database never misaligns Trailer.
 func TestBinaryCodecWritesZeroTimeInReservedExpirationSlot(t *testing.T) {
-	c := &BinaryCodec{}
-	encoded, err := c.Encode(cache.CacheItem{
+	encoded, err := encodeCacheItem(CacheItem{
 		Content:  []byte("body"),
 		Status:   200,
 		Header:   http.Header{"X-Test": {"1"}},

@@ -1,4 +1,4 @@
-package codec
+package cache
 
 import (
 	"bytes"
@@ -8,30 +8,9 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"jonbaldie/gleam/cache"
 )
 
-// Codec defines an interface for serialization of cache items.
-type Codec interface {
-	Encode(item cache.CacheItem) ([]byte, error)
-	Decode(data []byte) (*cache.CacheItem, error)
-}
-
-// BinaryCodec implements the Codec interface using a binary format.
-type BinaryCodec struct{}
-
-// Encode serializes a CacheItem to a byte slice.
-func (c *BinaryCodec) Encode(item cache.CacheItem) ([]byte, error) {
-	return encodeCacheItem(item)
-}
-
-// Decode deserializes a byte slice back into a CacheItem.
-func (c *BinaryCodec) Decode(data []byte) (*cache.CacheItem, error) {
-	return decodeCacheItem(data)
-}
-
-func encodeCacheItem(item cache.CacheItem) ([]byte, error) {
+func encodeCacheItem(item CacheItem) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := encodeTo(&buf, item); err != nil {
 		return nil, err
@@ -104,7 +83,7 @@ func validateStatus(status uint32) error {
 	return nil
 }
 
-func encodeTo(w io.Writer, item cache.CacheItem) error {
+func encodeTo(w io.Writer, item CacheItem) error {
 	if err := writeSized(w, item.Content); err != nil {
 		return err
 	}
@@ -227,7 +206,7 @@ func skipReservedExpiration(r *bytes.Reader) error {
 // decodeOptionalTail reads the fields appended to the format after its first
 // version — the trailer headers and the response time — each of which is
 // absent from entries written by an earlier version.
-func decodeOptionalTail(r *bytes.Reader, item *cache.CacheItem) error {
+func decodeOptionalTail(r *bytes.Reader, item *CacheItem) error {
 	if r.Len() == 0 {
 		return nil
 	}
@@ -249,14 +228,14 @@ func decodeOptionalTail(r *bytes.Reader, item *cache.CacheItem) error {
 	return nil
 }
 
-func decodeCacheItem(data []byte) (*cache.CacheItem, error) {
+func decodeCacheItem(data []byte) (*CacheItem, error) {
 	decoded, err := base64.StdEncoding.DecodeString(string(data))
 	if err != nil {
 		return nil, err
 	}
 
 	buf := bytes.NewReader(decoded)
-	item := &cache.CacheItem{}
+	item := &CacheItem{}
 
 	if item.Content, err = readSized(buf); err != nil {
 		return nil, err

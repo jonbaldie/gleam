@@ -47,7 +47,7 @@ func TestUncacheableResponsesStreamWithoutCapture(t *testing.T) {
 						t.Errorf("retained %d body bytes for an uncacheable response", got)
 					}
 				}
-			}), newMockCache(), time.Minute, nil)
+			}), newTestCache(t), time.Minute, nil)
 			for i := 0; i < 2; i++ {
 				client := httptest.NewRecorder()
 				handler.ServeHTTP(client, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -107,7 +107,7 @@ func TestResponseCaptureTransitions(t *testing.T) {
 			h := NewHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls++
 				tc.write(t, w.(*cacheResponseWriter))
-			}), newMockCache(), time.Minute, nil)
+			}), newTestCache(t), time.Minute, nil)
 			for i := 0; i < 2; i++ {
 				rec := httptest.NewRecorder()
 				h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -139,7 +139,7 @@ func TestAuthenticatedResponseCapture(t *testing.T) {
 				if got := w.(*cacheResponseWriter).buf.Len(); got != tc.wantCaptured {
 					t.Errorf("captured %d, want %d", got, tc.wantCaptured)
 				}
-			}), newMockCache(), time.Minute, nil)
+			}), newTestCache(t), time.Minute, nil)
 			for i := 0; i < 2; i++ {
 				req := httptest.NewRequest(http.MethodGet, "/", nil)
 				req.Header.Set("Authorization", "Bearer token")
@@ -176,7 +176,7 @@ func TestEarlyHintsThenFinalResponseCapture(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			front := httptest.NewServer(NewHandler(NewOriginReverseProxy(u, nil), newMockCache(), time.Minute, nil))
+			front := httptest.NewServer(NewHandler(NewOriginReverseProxy(u, nil), newTestCache(t), time.Minute, nil))
 			defer front.Close()
 			for i := 0; i < 2; i++ {
 				var hints int

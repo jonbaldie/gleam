@@ -96,7 +96,7 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 	// skips this, and so skips storage too.
 	crw.upstreamReturned = true
 	if crw.cachedHeader == nil {
-		crw.cachedHeader = cloneHeader(crw.ResponseWriter.Header())
+		crw.cachedHeader = cache.CloneHeader(crw.ResponseWriter.Header())
 	}
 
 	storeResponse(c, cacheKey, crw, ttl)
@@ -228,7 +228,7 @@ func (w *cacheResponseWriter) storable() bool {
 
 func (w *cacheResponseWriter) WriteHeader(status int) {
 	w.status = status
-	w.cachedHeader = cloneHeader(w.ResponseWriter.Header())
+	w.cachedHeader = cache.CloneHeader(w.ResponseWriter.Header())
 	if w.cachedHeader == nil {
 		w.capturing = cachepolicy.StatusPermitsStorage(status)
 	} else {
@@ -375,17 +375,6 @@ func commaSeparatedHeaderValues(values []string) []string {
 		}
 	}
 	return parts
-}
-
-func cloneHeader(header http.Header) http.Header {
-	if len(header) == 0 {
-		return nil
-	}
-	clone := make(http.Header, len(header))
-	for key, values := range header {
-		clone[key] = append([]string(nil), values...)
-	}
-	return clone
 }
 
 // cacheBaseKey is the host+URI portion shared by a URI's exact cache key and

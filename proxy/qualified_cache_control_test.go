@@ -22,7 +22,7 @@ func TestBugHuntQualifiedPrivateFieldStored(t *testing.T) {
 		_, _ = fmt.Fprint(w, "public-body")
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for i := 1; i <= 2; i++ {
@@ -49,7 +49,7 @@ func TestBugHuntQualifiedNoCacheFieldReplayed(t *testing.T) {
 		_, _ = fmt.Fprint(w, "public-body")
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	for i := 1; i <= 2; i++ {
@@ -84,7 +84,7 @@ func TestProxyHandlesQuotedCommaInCacheControlDirective(t *testing.T) {
 				_, _ = fmt.Fprint(w, "public-body")
 			})
 
-			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 			for i := 1; i <= 2; i++ {
 				rec := httptest.NewRecorder()
 				handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -107,7 +107,7 @@ func TestProxyStillCachesResponseWithUnrelatedQualifiedDirective(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", n)
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	for i := 1; i <= 2; i++ {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resource", nil))
@@ -131,7 +131,7 @@ func TestProxyHonoursQualifiedRequestNoCache(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", n)
 	})
 
-	handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+	handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 	for i := 1; i <= 2; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 		req.Header.Set("Cache-Control", `no-cache="X-Secret"`)

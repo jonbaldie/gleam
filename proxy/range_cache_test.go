@@ -24,7 +24,7 @@ func TestBugHuntRangeResponseSharesFullResponseKey(t *testing.T) {
 		_, _ = w.Write([]byte("0123456789"))
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	rangeReq := httptest.NewRequest(http.MethodGet, "/resource", nil)

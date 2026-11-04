@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"jonbaldie/gleam/cache"
-	"jonbaldie/gleam/codec"
 	"jonbaldie/gleam/proxy"
 	"log"
 	"math"
@@ -12,197 +10,10 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 )
-
-var ctx = context.Background()
-
-// SimpleCache holds the cache data
-type SimpleCache struct {
-	mu       sync.Mutex
-	store    map[string]*simpleEntry
-	stop     chan struct{}
-	done     chan struct{}
-	stopOnce sync.Once
-}
-
-// simpleEntry pairs a stored item with the moment its ttl elapses.
-type simpleEntry struct {
-	item      *cache.CacheItem
-	expiresAt time.Time
-}
-
-// Set stores data in the cache
-func (c *SimpleCache) Set(key string, item cache.CacheItem, ttl time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.store[key] = &simpleEntry{
-		item: &cache.CacheItem{
-			Content:  item.Content,
-			Header:   cloneHeader(item.Header),
-			Trailer:  cloneHeader(item.Trailer),
-			Status:   item.Status,
-			StoredAt: item.StoredAt,
-		},
-		expiresAt: time.Now().Add(ttl),
-	}
-}
-
-// Get retrieves data from the cache
-func (c *SimpleCache) Get(key string) (*cache.CacheItem, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	entry, found := c.store[key]
-	if !found {
-		return nil, false
-	}
-	if !time.Now().Before(entry.expiresAt) {
-		delete(c.store, key)
-		return nil, false
-	}
-	return entry.item, true
-}
-
-// InvalidatePrefix removes every entry whose key matches the given host+URI
-// base key, including vary-variant entries derived from it.
-func (c *SimpleCache) InvalidatePrefix(prefix string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for key := range c.store {
-		if cache.MatchesPrefix(key, prefix) {
-			delete(c.store, key)
-		}
-	}
-}
-
-// NewSimpleCache initializes and returns a new SimpleCache
-func NewSimpleCache() *SimpleCache {
-	c := &SimpleCache{
-		store: make(map[string]*simpleEntry),
-		stop:  make(chan struct{}),
-		done:  make(chan struct{}),
-	}
-	ticker := time.NewTicker(time.Minute)
-	go c.evictExpired(ticker)
-	return c
-}
-
-func (c *SimpleCache) evictExpired(ticker *time.Ticker) {
-	defer close(c.done)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			c.mu.Lock()
-			now := time.Now()
-			for key, entry := range c.store {
-				if !now.Before(entry.expiresAt) {
-					delete(c.store, key)
-				}
-			}
-			c.mu.Unlock()
-		case <-c.stop:
-			return
-		}
-	}
-}
-
-// Close stops the expiry worker and waits for it to finish. Cache operations
-// remain available after Close, but expired entries are no longer swept.
-func (c *SimpleCache) Close() {
-	c.stopOnce.Do(func() { close(c.stop) })
-	<-c.done
-}
-
-// RedisCache implements the Cache interface using Redis
-type RedisCache struct {
-	client *redis.Client
-	codec  codec.Codec
-}
-
-// NewRedisCache initializes and returns a new RedisCache using a single Redis URL
-func NewRedisCache(redisURL string, cd codec.Codec) *RedisCache {
-	// Parse the Redis URL
-	opt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		log.Fatalf("Failed to parse Redis URL: %v", err)
-	}
-
-	// Initialize the Redis client using the parsed options
-	rdb := redis.NewClient(opt)
-	return &RedisCache{
-		client: rdb,
-		codec:  cd,
-	}
-}
-
-// Set stores data in Redis
-func (r *RedisCache) Set(key string, item cache.CacheItem, ttl time.Duration) {
-	itemBytes, err := r.codec.Encode(item)
-	if err != nil {
-		log.Printf("failed to encode cache item for key %q: %v", key, err)
-		return
-	}
-	if err := r.client.Set(ctx, key, itemBytes, ttl).Err(); err != nil {
-		log.Printf("failed to write cache item for key %q: %v", key, err)
-	}
-}
-
-// Get retrieves data from Redis
-func (r *RedisCache) Get(key string) (*cache.CacheItem, bool) {
-	// Fetch from Redis
-	result, err := r.client.Get(ctx, key).Result()
-	if err == redis.Nil || err != nil {
-		return nil, false
-	}
-
-	// Deserialize CacheItem
-	var cacheItem *cache.CacheItem
-	cacheItem, err = r.codec.Decode([]byte(result))
-	if err != nil {
-		return nil, false
-	}
-
-	return cacheItem, true
-}
-
-// InvalidatePrefix removes every entry whose key matches the given host+URI
-// base key, including vary-variant entries derived from it. Redis keys embed
-// the vary-header hash, so the keyspace is enumerated and filtered
-// client-side rather than matched by a glob pattern.
-func (r *RedisCache) InvalidatePrefix(prefix string) {
-	var toDelete []string
-	var cursor uint64
-	for {
-		keys, next, err := r.client.Scan(ctx, cursor, "", 100).Result()
-		if err != nil {
-			log.Printf("failed to enumerate cache keys to invalidate %q: %v", prefix, err)
-			return
-		}
-		for _, key := range keys {
-			if cache.MatchesPrefix(key, prefix) {
-				toDelete = append(toDelete, key)
-			}
-		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
-	}
-
-	if len(toDelete) == 0 {
-		return
-	}
-	if err := r.client.Del(ctx, toDelete...).Err(); err != nil {
-		log.Printf("failed to invalidate %d cache entries for %q: %v", len(toDelete), prefix, err)
-	}
-}
 
 // Config holds all configurable options
 type Config struct {
@@ -240,6 +51,11 @@ func loadConfigFromEnv() (*Config, error) {
 	cacheType := getenv("CACHE_TYPE", "memory")
 	if cacheType != "redis" && cacheType != "memory" {
 		return nil, fmt.Errorf("invalid CACHE_TYPE, must be 'memory' (default) or 'redis'")
+	}
+	if cacheType == "redis" {
+		if _, err := redis.ParseURL(redisUrl); err != nil {
+			return nil, fmt.Errorf("invalid REDIS_URL: %w", err)
+		}
 	}
 	varyHeaders := proxy.DefaultVaryHeaders()
 	if raw, ok := os.LookupEnv("CACHE_VARY_HEADERS"); ok {
@@ -285,17 +101,6 @@ func getenv(key, fallback string) string {
 	return value
 }
 
-func cloneHeader(header http.Header) http.Header {
-	if len(header) == 0 {
-		return nil
-	}
-	clone := make(http.Header, len(header))
-	for key, values := range header {
-		clone[key] = append([]string(nil), values...)
-	}
-	return clone
-}
-
 func requestLoggingHandler(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s", r.Method, r.URL.EscapedPath())
@@ -317,9 +122,14 @@ func run() error {
 	var c cache.Cache
 
 	if config.CacheType == "redis" {
-		c = NewRedisCache(config.RedisURL, &codec.BinaryCodec{})
+		redisCache, err := cache.NewRedisCache(config.RedisURL)
+		if err != nil {
+			return fmt.Errorf("invalid REDIS_URL: %w", err)
+		}
+		defer redisCache.Close()
+		c = redisCache
 	} else {
-		memoryCache := NewSimpleCache()
+		memoryCache := cache.NewMemoryCache()
 		defer memoryCache.Close()
 		c = memoryCache
 	}

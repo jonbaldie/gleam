@@ -9,6 +9,16 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
 
     steps:
     - name: Checkout code
@@ -23,6 +33,11 @@ jobs:
       run: |
         ./scripts/install-golangci-lint.sh
         GOTOOLCHAIN=go1.25.13 ./bin/golangci-lint run --build-tags=gms_pure_go ./...
+
+    - name: Run all Go tests with Redis
+      env:
+        GLEAM_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      run: go test ./...
 
     - name: Build Docker image
       run: docker build -t jonbaldie/gleam .

@@ -1,38 +1,36 @@
-package codec
+package cache
 
 import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
-	"jonbaldie/gleam/cache"
 	"net/http"
 	"strings"
 	"testing"
 )
 
 func TestEncode_InvalidStatus(t *testing.T) {
-	codec := &BinaryCodec{}
 
 	// Status < 100
-	item := cache.CacheItem{Status: 99}
-	if _, err := codec.Encode(item); err == nil || !strings.Contains(err.Error(), "invalid status code") {
+	item := CacheItem{Status: 99}
+	if _, err := encodeCacheItem(item); err == nil || !strings.Contains(err.Error(), "invalid status code") {
 		t.Errorf("Expected invalid status code error, got %v", err)
 	}
 
 	// Status > 999
-	item = cache.CacheItem{Status: 1000}
-	if _, err := codec.Encode(item); err == nil || !strings.Contains(err.Error(), "invalid status code") {
+	item = CacheItem{Status: 1000}
+	if _, err := encodeCacheItem(item); err == nil || !strings.Contains(err.Error(), "invalid status code") {
 		t.Errorf("Expected invalid status code error, got %v", err)
 	}
 
 	// Status 100 and 999 are valid
-	item = cache.CacheItem{Status: 100}
-	if _, err := codec.Encode(item); err != nil {
+	item = CacheItem{Status: 100}
+	if _, err := encodeCacheItem(item); err != nil {
 		t.Errorf("Status 100 should be valid, got %v", err)
 	}
-	item = cache.CacheItem{Status: 999}
-	if _, err := codec.Encode(item); err != nil {
+	item = CacheItem{Status: 999}
+	if _, err := encodeCacheItem(item); err != nil {
 		t.Errorf("Status 999 should be valid, got %v", err)
 	}
 }
@@ -56,7 +54,7 @@ func (f *failingWriter) Write(p []byte) (int, error) {
 }
 
 func TestEncodeTo_WriteErrors(t *testing.T) {
-	item := cache.CacheItem{
+	item := CacheItem{
 		Content: []byte("test"),
 		Header:  http.Header{"X-Test": {"val1", "val2"}},
 		Status:  200,
@@ -77,7 +75,6 @@ func TestEncodeTo_WriteErrors(t *testing.T) {
 }
 
 func TestDecode_InvalidStatus(t *testing.T) {
-	codec := &BinaryCodec{}
 
 	var buf bytes.Buffer
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(4))
@@ -85,7 +82,7 @@ func TestDecode_InvalidStatus(t *testing.T) {
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(99))
 
 	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
-	if _, err := codec.Decode([]byte(encoded)); err == nil || !strings.Contains(err.Error(), "invalid status code") {
+	if _, err := decodeCacheItem([]byte(encoded)); err == nil || !strings.Contains(err.Error(), "invalid status code") {
 		t.Errorf("Expected invalid status code error, got %v", err)
 	}
 
@@ -94,20 +91,19 @@ func TestDecode_InvalidStatus(t *testing.T) {
 	_, _ = buf.Write([]byte("test"))
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(1000))
 	encoded = base64.StdEncoding.EncodeToString(buf.Bytes())
-	if _, err := codec.Decode([]byte(encoded)); err == nil || !strings.Contains(err.Error(), "invalid status code") {
+	if _, err := decodeCacheItem([]byte(encoded)); err == nil || !strings.Contains(err.Error(), "invalid status code") {
 		t.Errorf("Expected invalid status code error, got %v", err)
 	}
 }
 
 func TestDecode_Truncated(t *testing.T) {
-	codec := &BinaryCodec{}
 
-	item := cache.CacheItem{
+	item := CacheItem{
 		Content: []byte("test"),
 		Header:  http.Header{"X-Test": {"val1"}},
 		Status:  200,
 	}
-	encoded, _ := codec.Encode(item)
+	encoded, _ := encodeCacheItem(item)
 	decoded, _ := base64.StdEncoding.DecodeString(string(encoded))
 
 	// The trailing StoredAt and Trailer fields are optional, so payloads cut
@@ -122,7 +118,7 @@ func TestDecode_Truncated(t *testing.T) {
 
 	for i := 1; i < len(decoded); i++ {
 		trunc := base64.StdEncoding.EncodeToString(decoded[:i])
-		_, err := codec.Decode([]byte(trunc))
+		_, err := decodeCacheItem([]byte(trunc))
 		if err == nil && i != withoutStoredAt && i != withoutTrailer {
 			t.Fatalf("Expected error for truncated payload at length %d", i)
 		}

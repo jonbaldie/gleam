@@ -46,15 +46,14 @@ func TestProxyDoesNotCacheResponseAfterDownstreamWriteError(t *testing.T) {
 		_, _ = w.Write(body)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(origin, c, time.Minute, DefaultVaryHeaders())
 
-	handler.ServeHTTP(&failingWriter{}, httptest.NewRequest(http.MethodGet, "/big", nil))
+	request := httptest.NewRequest(http.MethodGet, "/big", nil)
+	handler.ServeHTTP(&failingWriter{}, request)
 
-	if len(c.store) != 0 {
-		for key, entry := range c.store {
-			t.Fatalf("expected nothing cached after a failed copy, got key %q with %d bytes", key, len(entry.item.Content))
-		}
+	if item, ok := c.Get(cacheKeyForRequest(request)); ok {
+		t.Fatalf("expected nothing cached after a failed copy, got %#v", item)
 	}
 
 	rec := httptest.NewRecorder()
@@ -70,25 +69,35 @@ func TestProxyDoesNotCacheResponseAfterDownstreamWriteError(t *testing.T) {
 // Under a real server the reverse proxy unwinds with http.ErrAbortHandler when
 // its copy to the client fails; the truncated response must not be stored.
 func TestProxyDoesNotCacheResponseWhenUpstreamAborts(t *testing.T) {
+	var originCalls atomic.Int32
 	origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "max-age=60")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("partial"))
-		panic(http.ErrAbortHandler)
+		if originCalls.Add(1) == 1 {
+			_, _ = w.Write([]byte("partial"))
+			panic(http.ErrAbortHandler)
+		}
+		_, _ = w.Write([]byte("complete"))
 	})
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(origin, c, time.Minute, DefaultVaryHeaders())
 
+	request := httptest.NewRequest(http.MethodGet, "/big", nil)
 	func() {
 		defer func() {
 			if rec := recover(); rec != http.ErrAbortHandler {
 				t.Fatalf("recovered %v, want the upstream's http.ErrAbortHandler", rec)
 			}
 		}()
-		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/big", nil))
+		handler.ServeHTTP(httptest.NewRecorder(), request)
 	}()
 
-	if len(c.store) != 0 {
-		t.Fatalf("expected nothing cached after an aborted copy, got %d entries", len(c.store))
+	if item, ok := c.Get(cacheKeyForRequest(request)); ok {
+		t.Fatalf("expected nothing cached after an aborted copy, got %#v", item)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, request)
+	if rec.Code != http.StatusOK || rec.Body.String() != "complete" || originCalls.Load() != 2 {
+		t.Fatalf("retry = %d %q, origin calls = %d; want 200, complete, 2", rec.Code, rec.Body.String(), originCalls.Load())
 	}
 }

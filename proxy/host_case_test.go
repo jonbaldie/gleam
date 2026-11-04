@@ -23,7 +23,7 @@ func TestProxyHostHeaderCaseSharing(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "payload-%d", call)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	testCases := []string{
@@ -109,7 +109,7 @@ func TestProxyHostHeaderCaseInvalidation(t *testing.T) {
 				}
 			})
 
-			c := newMockCache()
+			c := newTestCache(t)
 			handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 			// Prime the cache

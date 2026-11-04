@@ -29,6 +29,18 @@ func MatchesPrefix(key, prefix string) bool {
 	return key == prefix || strings.HasPrefix(key, prefix+"#h=")
 }
 
+// CloneHeader copies a header and its value slices. Empty headers become nil.
+func CloneHeader(header http.Header) http.Header {
+	if len(header) == 0 {
+		return nil
+	}
+	clone := make(http.Header, len(header))
+	for key, values := range header {
+		clone[key] = append([]string(nil), values...)
+	}
+	return clone
+}
+
 // CacheItem represents a single cache entry.
 type CacheItem struct {
 	Content []byte

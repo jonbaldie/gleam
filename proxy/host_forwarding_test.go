@@ -32,7 +32,7 @@ func TestProxyForwardsRequestsWithOriginHost(t *testing.T) {
 				_, _ = fmt.Fprint(w, "ok")
 			})
 
-			handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), newMockCache(), time.Minute, nil)
+			handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), newTestCache(t), time.Minute, nil)
 			request := httptest.NewRequest(tt.method, "http://client.example:8080/x", nil)
 			request.Host = "client.example:8080"
 			if tt.cacheBypass {
@@ -63,7 +63,7 @@ func TestProxySeparatesCacheEntriesByInboundHost(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "response-%d", originCalls)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	requestA := httptest.NewRequest(http.MethodGet, "http://client-a.example/shared", nil)
 	requestA.Host = "client-a.example"
@@ -108,7 +108,7 @@ func TestProxyInvalidatesCacheEntriesByInboundHost(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := NewHandler(NewOriginReverseProxy(testOriginURL, handlerTransport(origin)), c, time.Minute, nil)
 	getRequest := httptest.NewRequest(http.MethodGet, "http://client.example/resource", nil)
 	getRequest.Host = "client.example"
@@ -135,16 +135,16 @@ func TestDefaultTransportPreservesHostScopedCache(t *testing.T) {
 	t.Parallel()
 	constructors := []struct {
 		name string
-		new  func(*url.URL) http.Handler
+		new  func(*testing.T, *url.URL) http.Handler
 	}{
-		{"New", func(origin *url.URL) http.Handler {
-			return New(origin, newMockCache(), time.Minute)
+		{"New", func(t *testing.T, origin *url.URL) http.Handler {
+			return New(origin, newTestCache(t), time.Minute)
 		}},
-		{"NewWithVaryHeaders", func(origin *url.URL) http.Handler {
-			return NewWithVaryHeaders(origin, newMockCache(), time.Minute, DefaultVaryHeaders())
+		{"NewWithVaryHeaders", func(t *testing.T, origin *url.URL) http.Handler {
+			return NewWithVaryHeaders(origin, newTestCache(t), time.Minute, DefaultVaryHeaders())
 		}},
-		{"NewOriginReverseProxy", func(origin *url.URL) http.Handler {
-			return NewHandler(NewOriginReverseProxy(origin, nil), newMockCache(), time.Minute, DefaultVaryHeaders())
+		{"NewOriginReverseProxy", func(t *testing.T, origin *url.URL) http.Handler {
+			return NewHandler(NewOriginReverseProxy(origin, nil), newTestCache(t), time.Minute, DefaultVaryHeaders())
 		}},
 	}
 	for _, constructor := range constructors {
@@ -164,7 +164,7 @@ func TestDefaultTransportPreservesHostScopedCache(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse origin URL: %v", err)
 			}
-			handler := constructor.new(originURL)
+			handler := constructor.new(t, originURL)
 			steps := []struct {
 				method      string
 				host        string

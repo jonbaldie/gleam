@@ -1,21 +1,22 @@
 package proxy
 
 import (
+	"jonbaldie/gleam/cache"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 )
 
-// backdateStoredEntries rewinds every stored entry's response time by d, so a
-// cache hit is served as though it had been resident for that long.
-func backdateStoredEntries(c *mockCache, d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, entry := range c.store {
-		entry.item.StoredAt = entry.item.StoredAt.Add(-d)
+func backdateStoredEntry(t *testing.T, c cache.Cache, req *http.Request, d time.Duration) {
+	t.Helper()
+	key := cacheKeyForRequest(req)
+	item, ok := c.Get(key)
+	if !ok {
+		t.Fatalf("expected cached entry for %q", key)
 	}
+	item.StoredAt = item.StoredAt.Add(-d)
+	c.Set(key, *item, time.Hour)
 }
 
 // TestBugHuntCachedResponseOmitsAgeHeader reproduces jonbaldie/gleam#60: a
@@ -27,7 +28,7 @@ func TestBugHuntCachedResponseOmitsAgeHeader(t *testing.T) {
 		_, _ = w.Write([]byte("body"))
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
@@ -40,7 +41,7 @@ func TestBugHuntCachedResponseOmitsAgeHeader(t *testing.T) {
 		t.Fatalf("expected forwarded origin response to carry no Age, got %q", got)
 	}
 
-	backdateStoredEntries(c, 30*time.Second)
+	backdateStoredEntry(t, c, req, 30*time.Second)
 
 	second := httptest.NewRecorder()
 	handler.ServeHTTP(second, req)
@@ -110,13 +111,13 @@ func TestProxyCacheHitAgeHeader(t *testing.T) {
 				_, _ = w.Write([]byte("body"))
 			})
 
-			c := newMockCache()
+			c := newTestCache(t)
 			handler := mustCachingProxyHandler(t, origin, c, time.Hour)
 
 			req := httptest.NewRequest(http.MethodGet, "/resource", nil)
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 
-			backdateStoredEntries(c, tc.resident)
+			backdateStoredEntry(t, c, req, tc.resident)
 
 			hit := httptest.NewRecorder()
 			handler.ServeHTTP(hit, req)
@@ -141,11 +142,12 @@ func TestProxyCachedNotModifiedCarriesAge(t *testing.T) {
 		_, _ = w.Write([]byte("body"))
 	})
 
-	c := newMockCache()
+	c := newTestCache(t)
 	handler := mustCachingProxyHandler(t, origin, c, time.Minute)
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
+	initial := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), initial)
 
-	backdateStoredEntries(c, 12*time.Second)
+	backdateStoredEntry(t, c, initial, 12*time.Second)
 
 	conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)
 	conditional.Header.Set("If-None-Match", etag)

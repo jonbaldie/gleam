@@ -44,7 +44,7 @@ func TestBugHuntIfNoneMatchIgnoredForNon200CachedResponse(t *testing.T) {
 				}
 			})
 
-			handler := mustCachingProxyHandler(t, origin, newMockCache(), time.Minute)
+			handler := mustCachingProxyHandler(t, origin, newTestCache(t), time.Minute)
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/resource", nil))
 
 			conditional := httptest.NewRequest(http.MethodGet, "/resource", nil)

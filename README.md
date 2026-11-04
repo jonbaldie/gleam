@@ -64,13 +64,13 @@ docker run --rm -p 80:80 -e ORIGIN_URL=https://www.jonbaldie.com -e PORT=80 jonb
 
 The memory cache scans for expired entries once per minute. A scan removes expired entries. Scheduling and lock contention can delay a scan. A request also removes an expired entry when it accesses the entry.
 
-Call `Close` when a `SimpleCache` is no longer needed. It stops the scan worker. Cache operations remain available, but scans stop. The server calls `Close` when its listen call returns.
+Library callers can create a cache with `cache.NewMemoryCache()`. Call `Close` when it is no longer needed. This stops the scan worker. Cache operations remain available, but scans stop. The server calls `Close` when its listen call returns.
 
 ## Redis
 
 This is one of my favourite features of Gleam. By setting `CACHE_TYPE=redis` and `REDIS_URL=redis://{username}:{password}@{hostname}:{port}/{database}` Gleam will cache your HTTP requests in Redis. 
 
-This uses [version 8](https://github.com/redis/go-redis) of `go-redis` so if you are having trouble setting your Redis URL, use their documentation [here](https://github.com/redis/go-redis?tab=readme-ov-file#connecting-via-a-redis-url).
+Library callers can create a Redis cache with `cache.NewRedisCache(redisURL)`. The constructor returns an error for an invalid URL. Call `Close` when the cache is no longer needed. Gleam uses [version 8 of go-redis](https://github.com/redis/go-redis?tab=readme-ov-file#connecting-via-a-redis-url) to parse Redis URLs.
 
 ## Exploratory testing
 
