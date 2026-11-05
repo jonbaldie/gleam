@@ -3,7 +3,7 @@ package proxy
 import (
 	"bytes"
 	"fmt"
-	"jonbaldie/gleam/cache"
+	"github.com/jonbaldie/gleam/cache"
 	"net/http"
 	"net/http/httptest"
 	"strings"

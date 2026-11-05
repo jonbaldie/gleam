@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"jonbaldie/gleam/cachepolicy"
+	"github.com/jonbaldie/gleam/cachepolicy"
 )
 
 func TestCurrentAge(t *testing.T) {

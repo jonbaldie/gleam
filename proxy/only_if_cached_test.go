@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"jonbaldie/gleam/cache"
+	"github.com/jonbaldie/gleam/cache"
 )
 
 func TestProxyOnlyIfCachedMissReturnsGatewayTimeout(t *testing.T) {

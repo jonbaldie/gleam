@@ -3,7 +3,7 @@ package proxy
 import (
 	"testing"
 
-	"jonbaldie/gleam/cache"
+	"github.com/jonbaldie/gleam/cache"
 )
 
 func newTestCache(t *testing.T) *cache.MemoryCache {

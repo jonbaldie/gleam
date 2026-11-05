@@ -1,4 +1,4 @@
-module jonbaldie/gleam
+module github.com/jonbaldie/gleam
 
 go 1.25.13
 

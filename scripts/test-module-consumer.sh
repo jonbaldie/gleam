@@ -3,7 +3,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-$root}/gleam-consumer.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT
+trap 'chmod -R u+w "$tmp"; rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/proxy/github.com/jonbaldie/gleam/@v" "$tmp/consumer"
 
 ROOT="$root" PROXY_DIR="$tmp/proxy/github.com/jonbaldie/gleam/@v" python3 - <<'PY'
@@ -27,6 +27,7 @@ with zipfile.ZipFile(proxy / f'{version}.zip', 'w', zipfile.ZIP_DEFLATED) as arc
 PY
 
 cd "$tmp/consumer"
+export PATH="$(go env GOROOT)/bin:$PATH" GOTOOLCHAIN=local GOMODCACHE="$tmp/modcache"
 export GOWORK=off GOPROXY="file://$tmp/proxy,https://proxy.golang.org" GONOSUMDB=github.com/jonbaldie/gleam
 go mod init example.com/gleam-consumer
 GOFLAGS=-mod=mod go get github.com/jonbaldie/gleam@v0.0.0

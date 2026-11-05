@@ -60,6 +60,10 @@ Here's a sample usage, proxying requests to my personal site on port 80:
 docker run --rm -p 80:80 -e ORIGIN_URL=https://www.jonbaldie.com -e PORT=80 jonbaldie/gleam
 ```
 
+## Go packages
+
+Use `go get github.com/jonbaldie/gleam@v0.3.0` to fetch the module. Import packages such as `github.com/jonbaldie/gleam/cache` and `github.com/jonbaldie/gleam/proxy`. Users of the old `jonbaldie/gleam` import path must update their imports.
+
 ## Memory cache
 
 The memory cache scans for expired entries once per minute. A scan removes expired entries. Scheduling and lock contention can delay a scan. A request also removes an expired entry when it accesses the entry.
