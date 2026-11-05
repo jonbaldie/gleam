@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"jonbaldie/gleam/cachepolicy"
+	"github.com/jonbaldie/gleam/cachepolicy"
 )
 
 // notModified evaluates a request's validators against a stored 200.

@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"jonbaldie/gleam/cache"
-	"jonbaldie/gleam/cachepolicy"
+	"github.com/jonbaldie/gleam/cache"
+	"github.com/jonbaldie/gleam/cachepolicy"
 )
 
 func New(origin *url.URL, c cache.Cache, ttl time.Duration) http.Handler {

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"jonbaldie/gleam/cache"
+	"github.com/jonbaldie/gleam/cache"
 	"log"
 	"net/http"
 	"net/http/httptest"

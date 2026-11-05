@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"jonbaldie/gleam/cachepolicy"
+	"github.com/jonbaldie/gleam/cachepolicy"
 )
 
 func TestCanStoreResponse(t *testing.T) {

@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"jonbaldie/gleam/cache"
+	"github.com/jonbaldie/gleam/cache"
 	"net/http"
 	"net/http/httptest"
 	"testing"

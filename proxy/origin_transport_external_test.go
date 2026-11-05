@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"jonbaldie/gleam/proxy"
+	"github.com/jonbaldie/gleam/proxy"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)

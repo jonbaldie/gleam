@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"jonbaldie/gleam/cachepolicy"
+	"github.com/jonbaldie/gleam/cachepolicy"
 )
 
 func main() {

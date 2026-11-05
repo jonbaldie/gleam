@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.3.0] — 2026-11-05
+
+### Changed
+- Change the Go module path from `jonbaldie/gleam` to `github.com/jonbaldie/gleam`. Existing users of the old path must update their imports (#148).
+
+### Fixed
+- Allow external Go modules to fetch and import the cache and proxy packages by their GitHub paths (#148).
+
 ## [v0.2.0] — 2026-11-05
 
 ### Changed
@@ -140,3 +148,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.10]: https://github.com/jonbaldie/gleam/compare/v0.1.9...v0.1.10
 [v0.1.11]: https://github.com/jonbaldie/gleam/compare/v0.1.10...v0.1.11
 [v0.2.0]: https://github.com/jonbaldie/gleam/compare/v0.1.11...v0.2.0
+[v0.3.0]: https://github.com/jonbaldie/gleam/compare/v0.2.0...v0.3.0

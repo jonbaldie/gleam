@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"jonbaldie/gleam/cache"
-	"jonbaldie/gleam/proxy"
+	"github.com/jonbaldie/gleam/cache"
+	"github.com/jonbaldie/gleam/proxy"
 	"log"
 	"math"
 	"net/http"

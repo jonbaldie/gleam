@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"jonbaldie/gleam/cachepolicy"
+	"github.com/jonbaldie/gleam/cachepolicy"
 )
 
 func newGET(header http.Header) *http.Request {
