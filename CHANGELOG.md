@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [v0.2.0] — 2026-11-05
+
+### Changed
+- Move the memory and Redis cache backends into the `cache` package. `cache.NewRedisCache` returns an error for an invalid URL. Remove the exported `codec` package; callers importing it must migrate (#94, #146).
+
+### Fixed
+- Stream uncacheable responses without retaining their bodies in the cache buffer. Otherwise cacheable bodies remain unbounded (#106, #145).
+
 ## [v0.1.11] — 2026-10-31
 
 ### Fixed
@@ -131,3 +139,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This pr
 [v0.1.9]: https://github.com/jonbaldie/gleam/compare/v0.1.8...v0.1.9
 [v0.1.10]: https://github.com/jonbaldie/gleam/compare/v0.1.9...v0.1.10
 [v0.1.11]: https://github.com/jonbaldie/gleam/compare/v0.1.10...v0.1.11
+[v0.2.0]: https://github.com/jonbaldie/gleam/compare/v0.1.11...v0.2.0
