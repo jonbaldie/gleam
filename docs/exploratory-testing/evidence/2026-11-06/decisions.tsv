@@ -1,0 +1,7 @@
+ts	phase	decision	why	evidence	result
+2026-11-06T01:34:06Z	frame	Chose three memory-cache HTTP journeys on origin/main	Check user-visible cache isolation and cache-only behavior without touching shared data	docs/exploratory-testing/2026-11-06-exploratory-testing.md	Scope fixed at three journeys
+2026-11-06T01:34:06Z	build	Used readonly Go module resolution with worktree-local caches	Keep dependencies and build outputs isolated	docs/exploratory-testing/evidence/2026-11-06/go-test.txt	Build and Go tests pass
+2026-11-06T01:34:06Z	explore	Replayed the same journeys with a fresh proxy and origin	Check repeatability and lasting origin request counts	docs/exploratory-testing/evidence/2026-11-06/replay.txt	All assertions pass twice
+2026-11-06T01:34:06Z	findings	Filed no new issues	The observed journeys passed and the related reports already exist	docs/exploratory-testing/2026-11-06-exploratory-testing.md	No confirmed or unresolved bugs
+2026-11-06T01:34:06Z	cleanup	Waited for the proxy and checked both ports after each run	Verify that this pass did not leave its test services running	docs/exploratory-testing/evidence/2026-11-06/replay.txt	Proxy exited and both connections refused
+2026-11-06T01:35:24Z	review	Added build details and reran Go tests without the test cache	The independent review found weak build and test provenance	docs/exploratory-testing/evidence/2026-11-06/build.txt	Fresh tests pass; initial log rows were recorded retrospectively

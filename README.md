@@ -78,7 +78,7 @@ Library callers can create a Redis cache with `cache.NewRedisCache(redisURL)`. T
 
 ## Exploratory testing
 
-Reports from hands-on testing passes, with replay steps and evidence, live in [`docs/exploratory-testing/`](docs/exploratory-testing/). Latest: [2026-10-29](docs/exploratory-testing/2026-10-29-exploratory-testing.md).
+Reports from hands-on testing passes, with replay steps and evidence, live in [`docs/exploratory-testing/`](docs/exploratory-testing/). Latest: [2026-11-06](docs/exploratory-testing/2026-11-06-exploratory-testing.md).
 
 ## Naming
 

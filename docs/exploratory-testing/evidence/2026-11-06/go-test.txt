@@ -1,0 +1,6 @@
+$ go test -mod=readonly -count=1 ./...
+ok  	github.com/jonbaldie/gleam	0.020s
+ok  	github.com/jonbaldie/gleam/cache	0.013s
+ok  	github.com/jonbaldie/gleam/cachepolicy	0.018s
+?   	github.com/jonbaldie/gleam/docs/exploratory-testing/evidence/2026-10-03	[no test files]
+ok  	github.com/jonbaldie/gleam/proxy	0.053s
