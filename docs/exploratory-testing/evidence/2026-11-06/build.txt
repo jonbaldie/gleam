@@ -1,0 +1,24 @@
+source commit: 088f451004c561ec4383b3092ce56315d6905818
+go version go1.26.8 linux/amd64
+build command: go build -mod=readonly -o .scratch/gleam .
+.scratch/gleam: go1.26.8
+	path	github.com/jonbaldie/gleam
+	mod	github.com/jonbaldie/gleam	v0.3.0
+	dep	github.com/cespare/xxhash/v2	v2.1.2	h1:YRXhKfTDauu4ajMg1TPgFO5jnlC2HCbmLXMcTG5cbYE=
+	dep	github.com/dgryski/go-rendezvous	v0.0.0-20200823014737-9f7001d12a5f	h1:lO4WD4F/rVNCu3HqELle0jiPLLBs70cWOduZpkS1E78=
+	dep	github.com/go-redis/redis/v8	v8.11.5	h1:AcZZR7igkdvfVmQTPnu9WE37LRrO/YrBH5zWyjDC0oI=
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	DefaultGODEBUG=cryptocustomrand=1,tlssecpmlkem=0,urlstrictcolons=0
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS=
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=088f451004c561ec4383b3092ce56315d6905818
+	build	vcs.time=2026-11-05T15:05:59Z
+	build	vcs.modified=false

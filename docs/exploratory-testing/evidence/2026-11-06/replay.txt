@@ -1,0 +1,20 @@
+resources: origin port=37115, proxy port=39523, proxy pid=2636484
+J1: authenticated requests with and without shared-cache permission
+GET /auth-private {'Authorization': 'Bearer test'} => 200 age=None body='/auth-private count=1 cookie=-'
+GET /auth-private {'Authorization': 'Bearer test'} => 200 age=None body='/auth-private count=2 cookie=-'
+GET /auth-public {'Authorization': 'Bearer test'} => 200 age=None body='/auth-public count=1 cookie=-'
+GET /auth-public {'Authorization': 'Bearer test'} => 200 age=0 body='/auth-public count=1 cookie=-'
+J2: default cookie key isolation and repeat hits
+GET /cookie {'Cookie': 'session=red'} => 200 age=None body='/cookie count=1 cookie=session=red'
+GET /cookie {'Cookie': 'session=red'} => 200 age=0 body='/cookie count=1 cookie=session=red'
+GET /cookie {'Cookie': 'session=blue'} => 200 age=None body='/cookie count=2 cookie=session=blue'
+GET /cookie {'Cookie': 'session=blue'} => 200 age=0 body='/cookie count=2 cookie=session=blue'
+J3: offline-only requests on a miss and a hit
+GET /offline {'Cache-Control': 'only-if-cached'} => 504 age=None body=''
+GET /offline {} => 200 age=None body='/offline count=1 cookie=-'
+GET /offline {'Cache-Control': 'only-if-cached'} => 200 age=0 body='/offline count=1 cookie=-'
+PASS: all assertions; origin counts: [('/auth-private', 2), ('/auth-public', 1), ('/cookie', 2), ('/offline', 1)]
+cleanup: proxy pid=2636484 exited=-15
+cleanup: origin server closed and thread joined
+cleanup: origin port=37115 connect errno=111
+cleanup: proxy port=39523 connect errno=111
