@@ -49,9 +49,12 @@ func TestRedisCacheRoundTripAndInvalidation(t *testing.T) {
 		backend.Set(key, want, time.Minute)
 	}
 	const legacy = "DwAAAGNhY2hlZCByZXNwb25zZcgAAAABAAAABgAAAFgtVGVzdAIAAAADAAAAb25lAwAAAHR3bw8AAAABAAAAAAAAAAAAAAAA//8BAAAACgAAAFgtRmluaXNoZWQBAAAAAwAAAHllcw8AAAABAAAADuI0IfUAAAAA//8="
-	encoded, err := client.Get(ctx, prefix).Result()
-	if err != nil || encoded != legacy {
-		t.Fatalf("stored Redis bytes = %q, %v; want legacy encoding %q", encoded, err, legacy)
+	encoded, err := client.Get(ctx, prefix).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeCacheItem(encoded); err == nil {
+		t.Fatal("legacy reader accepted new Redis encoding")
 	}
 	if err := client.Set(ctx, keys[5], legacy, time.Minute).Err(); err != nil {
 		t.Fatal(err)

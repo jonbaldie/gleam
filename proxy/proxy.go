@@ -80,6 +80,9 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 	authenticated := cachepolicy.IsAuthenticated(r)
 
 	cacheKey := cacheKeyForRequestWithVaryHeaders(r, varyHeaders)
+	if serveCachedMetadata(c, cacheKey, authenticated, w, r) {
+		return
+	}
 	if cachedItem, found := reusableCachedItem(c, cacheKey, authenticated); found {
 		serveCachedItem(w, r, cachedItem)
 		return
@@ -100,6 +103,22 @@ func serveGet(upstream http.Handler, c cache.Cache, w http.ResponseWriter, r *ht
 	}
 
 	storeResponse(c, cacheKey, crw, ttl)
+}
+
+func serveCachedMetadata(c cache.Cache, key string, authenticated bool, w http.ResponseWriter, r *http.Request) bool {
+	if len(r.Header.Values("If-None-Match")) == 0 && len(r.Header.Values("If-Modified-Since")) == 0 {
+		return false
+	}
+	metadataCache, ok := c.(cache.MetadataCache)
+	if !ok {
+		return false
+	}
+	item, found := metadataCache.GetMetadata(key)
+	if !found || !cachepolicy.CanReuse(item.Header, authenticated) || !cachepolicy.NotModified(r.Header, item.Status, item.Header) {
+		return false
+	}
+	writeCachedNotModified(w, item)
+	return true
 }
 
 // reusableCachedItem returns the stored entry for a key when this cache may
