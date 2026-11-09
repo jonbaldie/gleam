@@ -76,6 +76,10 @@ This is one of my favourite features of Gleam. By setting `CACHE_TYPE=redis` and
 
 Library callers can create a Redis cache with `cache.NewRedisCache(redisURL)`. The constructor returns an error for an invalid URL. Call `Close` when the cache is no longer needed. Gleam uses [version 8 of go-redis](https://github.com/redis/go-redis?tab=readme-ov-file#connecting-via-a-redis-url) to parse Redis URLs.
 
+New Redis entries store metadata and body in one value with one TTL. Matching conditional requests read only the metadata. A full read checks a body checksum. A metadata-only read checks the metadata and stored lengths, but cannot detect a same-length change to the body without reading it. Redis and its writers must preserve the stored body for metadata-only responses.
+
+New readers can read entries written by older versions. Older readers treat the new format as a cache miss and may replace it with an old-format entry. During an upgrade, mixed-version deployment, or rollback, this can increase origin traffic until entries are replaced or expire. Old-format entries use a full read for conditional requests, as do entries whose encoded metadata exceeds 16 MiB.
+
 ## Exploratory testing
 
 Reports from hands-on testing passes, with replay steps and evidence, live in [`docs/exploratory-testing/`](docs/exploratory-testing/). Latest: [2026-11-06](docs/exploratory-testing/2026-11-06-exploratory-testing.md).

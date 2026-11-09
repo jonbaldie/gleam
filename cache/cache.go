@@ -23,6 +23,12 @@ type Cache interface {
 	InvalidatePrefix(prefix string)
 }
 
+// MetadataCache optionally provides a live entry without its body. A failed
+// lookup may be retried with Cache.Get, which also supports older entries.
+type MetadataCache interface {
+	GetMetadata(key string) (*CacheItem, bool)
+}
+
 // MatchesPrefix reports whether key is the exact entry for the given host+URI
 // base key or a vary-variant entry derived from it (prefix + "#h=" + hash).
 func MatchesPrefix(key, prefix string) bool {
